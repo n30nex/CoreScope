@@ -24,13 +24,16 @@ if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(BASE).hostname)) {
     console.log('  ✓ shared emblem and upstream attribution');
     await page.evaluate(() => {
       window._customizerV2.writeOverrides({
-        branding: { siteName: 'Operator mesh', logoUrl: '/img/corescope-logo.svg' },
+        branding: { siteName: 'Operator mesh', logoUrl: '/img/corescope-logo.svg', homeUrl: 'https://example.org/' },
+        home: { heroTitle: 'Operator dashboard' },
         themeDark: { accent: '#dc2626', accentHover: '#ef4444' }
       });
       window._customizerV2.runPipeline();
     });
     assert.equal(await page.title(), 'Operator mesh');
     assert.equal(await page.locator('.brand-text').textContent(), 'Operator mesh');
+    assert.equal(await page.locator('.nav-brand').getAttribute('aria-label'), 'Operator mesh home');
+    assert.equal(await page.locator('.nav-brand').getAttribute('href'), 'https://example.org/');
     assert.equal(await page.locator('.brand-logo').getAttribute('src'), '/img/corescope-logo.svg');
     assert.equal(await page.locator('.brand-mark-only').getAttribute('src'), '/img/corescope-logo.svg');
     assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()), '#dc2626');
@@ -41,10 +44,29 @@ if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(BASE).hostname)) {
     await page.evaluate(() => {
       window._customizerV2.clearOverride('branding', 'logoUrl');
       window._customizerV2.clearOverride('branding', 'siteName');
+      window._customizerV2.clearOverride('branding', 'homeUrl');
     });
     assert.equal(await page.title(), 'Canadaverse CoreScope');
+    assert.equal(await page.locator('.brand-text').textContent(), 'Canadaverse CoreScope');
+    assert.equal(await page.locator('.nav-brand').getAttribute('href'), '#/');
     assert.equal(await page.locator('.brand-logo image').getAttribute('href'), 'brand/canadaverse-emblem.svg');
     assert.equal(await page.locator('.brand-mark-only image').getAttribute('href'), 'brand/canadaverse-emblem.svg');
+    for (const selector of ['.brand-logo', '.brand-mark-only']) {
+      assert.equal(await page.locator(selector + ' .logo-node-a').count(), 1, 'packet pulse remains available after reset');
+    }
     console.log('  ✓ persistence and reset restore both default marks');
+
+    await page.route('**/api/nodes/' + 'F'.repeat(64) + '/health', route => route.fulfill({
+      status: 404, contentType: 'application/json', body: '{"error":"No telemetry in this fixture"}'
+    }));
+    await page.evaluate(() => localStorage.setItem('meshcore-my-nodes', JSON.stringify([{ pubkey: 'F'.repeat(64), name: 'Fixture' }])));
+    await page.reload();
+    await page.waitForFunction(() => window._customizerV2?.initDone);
+    await page.locator('.mnc-remove').waitFor();
+    assert.equal(await page.locator('.home-hero h1').textContent(), 'My Mesh');
+    await page.locator('.mnc-remove').click();
+    assert.equal(await page.locator('.home-hero h1').textContent(), 'Operator dashboard');
+    assert.deepEqual(await page.locator('.home-action').evaluateAll(links => links.map(link => link.getAttribute('href'))), ['#/packets', '#/map', '#/nodes']);
+    console.log('  ✓ removing the last node preserves the operator title and existing routes');
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });
