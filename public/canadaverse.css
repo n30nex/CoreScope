@@ -289,3 +289,13 @@ textarea:focus-visible, summary:focus-visible {
   .home-actions { gap: 8px; }
   .home-action { flex: 1 1 180px; justify-content: space-between; }
 }
+
+@media (max-width: 640px) {
+  /* The mono labels need more width than the upstream font. Keep the VCR
+     in one row at 320px, with 24px targets and the full-size mobile clock. */
+  .vcr-bar { gap: 2px; padding-inline: 2px; }
+  .vcr-bar > .vcr-controls { gap: 2px; }
+  .vcr-btn { min-width: 24px; padding-inline: 4px; }
+  .vcr-scope-btn { min-width: 24px; padding-inline: 3px; }
+  .vcr-timeline-container { min-width: 24px; }
+}

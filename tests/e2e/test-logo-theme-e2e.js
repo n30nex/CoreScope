@@ -94,6 +94,44 @@ function contrast(a, b) {
       assert(await page.locator('.brand-mark-only').isVisible());
       assert(!(await page.locator('.brand-logo').isVisible()));
     });
+    await page.goto(BASE + '/#/live');
+    await page.locator('#vcrLcdCanvas').waitFor();
+    for (const width of [320, 360, 375, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await check(width + 'px: VCR controls, scrubber and clock fit in one row', async () => {
+        const layout = await page.evaluate(() => {
+          const bar = document.querySelector('#vcrBar');
+          const selectors = ['.vcr-controls', '.vcr-scope-btns', '.vcr-timeline-container', '.vcr-lcd'];
+          return selectors.map(selector => {
+            const el = bar.querySelector(selector);
+            const rect = el.getBoundingClientRect();
+            return { selector, parentIsBar: el.parentElement === bar, left: rect.left,
+              right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width };
+          });
+        });
+        for (const item of layout) {
+          assert(item.parentIsBar, item.selector + ' must stay in the VCR row');
+          assert(item.left >= 0 && item.right <= width, item.selector + ' clipped: ' + JSON.stringify(item));
+          assert(item.top >= 0 && item.bottom <= 800, item.selector + ' vertically clipped');
+          assert(item.top < layout[0].bottom && item.bottom > layout[0].top, item.selector + ' wrapped outside the controls row');
+        }
+        for (let i = 1; i < layout.length; i++) {
+          assert(layout[i].left >= layout[i - 1].right, 'VCR items overlap');
+        }
+        assert(layout[2].width >= 24, 'timeline must retain a usable scrub target');
+        assert(layout[3].width < 100, 'mobile clock must remain compact');
+        const clock = await page.locator('#vcrLcdCanvas').boundingBox();
+        assert(clock.width > 0 && clock.x >= layout[3].left && clock.x + clock.width <= layout[3].right, 'clock canvas clipped inside LCD');
+        for (const button of await page.locator('.vcr-controls button, .vcr-scope-btn:visible').all()) {
+          const box = await button.boundingBox();
+          assert(box.width >= 24 && box.height >= 24, 'VCR button target below 24px');
+        }
+        await page.locator('#vcrPauseBtn').click();
+        await page.waitForFunction(() => document.querySelector('#vcrLcdMode').textContent === 'PAUSE');
+        await page.locator('#vcrLiveBtn').click();
+        await page.waitForFunction(() => document.querySelector('#vcrLcdMode').textContent === 'LIVE');
+      });
+    }
     console.log(passed + ' brand theme/layout checks passed');
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });
