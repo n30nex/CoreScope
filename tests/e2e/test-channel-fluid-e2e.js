@@ -108,8 +108,9 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
   // #2052: exercise the actual controls in both pointer modes, not just
   // standalone CSS samples. Mobile channels use rows without inline icons;
   // the packets navbar supplies the visible .nav-btn mirrors on phones.
-  for (const width of [375, 390, 768, 1280]) {
-    await step(`viewport ${width}: 48px controls fit and respond to clicks`, async () => {
+  for (const [width, fallbackMono] of [320, 375, 390, 768, 1280].flatMap(width =>
+    (width < 768 ? [false, true] : [false]).map(fallbackMono => [width, fallbackMono]))) {
+    await step(`viewport ${width}${fallbackMono ? ' fallback mono' : ''}: 48px controls fit and respond to clicks`, async () => {
       const mobile = width < 768;
       const touchContext = await browser.newContext({
         viewport: { width, height: 900 }, hasTouch: mobile, isMobile: mobile,
@@ -122,6 +123,10 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
           { waitUntil: 'domcontentloaded' });
         const action = mobile ? '.filter-toggle-btn-mirror' : '[data-share-channel]';
         await target.waitForSelector(action);
+        // CI runs without the Windows Cascadia/Consolas fonts. Exercise the
+        // end of the brand font stack even when developing on Windows.
+        if (fallbackMono) await target.addStyleTag({ content:
+          ':root { --font: "Liberation Mono", monospace; --mono: "Liberation Mono", monospace; }' });
         await target.evaluate(() => document.fonts.ready);
         // Mobile page-actions rebuilds the mirror while packets initializes.
         // Query and measure in one browser turn so a detached selector snapshot
@@ -134,7 +139,7 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
           return els.map(el => {
               const r = el.getBoundingClientRect();
               const container = el.closest('.top-nav, .ch-item').getBoundingClientRect();
-              return { name: el.id || el.getAttribute('aria-label'), w: r.width, h: r.height,
+              return { name: el.id || el.getAttribute('aria-label') || el.title || el.className, w: r.width, h: r.height,
                 fits: r.left >= container.left - 1 && r.right <= container.right + 1
                   && r.top >= container.top - 1 && r.bottom <= container.bottom + 1 };
             });

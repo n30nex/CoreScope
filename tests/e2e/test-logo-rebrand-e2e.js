@@ -91,7 +91,7 @@ async function main() {
       }
       if (tag === 'svg') {
         // Inline SVG default — verify it actually renders the brand artwork.
-        const hasText = !!el.querySelector('text');
+        const hasText = !!el.querySelector('image[href="brand/canadaverse-emblem.svg"]');
         return { ok: hasText, tag, src: '<inline-svg>' };
       }
       return { ok: false, reason: 'unexpected .brand-logo tag: ' + tag };
@@ -105,8 +105,9 @@ async function main() {
     // 2. Old emoji + brand-text are gone
     const oldIcon = await page.$('.nav-brand .brand-icon');
     const oldText = await page.$('.nav-brand .brand-text');
-    if (oldIcon || oldText) fail('legacy .brand-icon / .brand-text still present (should be replaced by SVG logo)');
-    console.log('  ✅ legacy mushroom emoji + "CoreScope" text removed');
+    if (oldIcon || !oldText) fail('Canadaverse text lockup missing or legacy emoji present');
+    assert((await oldText.textContent()).includes('Canadaverse'), 'brand text must identify Canadaverse');
+    console.log('  ✅ Canadaverse text lockup accompanies the emblem');
     passed++;
 
     // 3. WS connection state indicator: #1173 replaced .live-dot with the
@@ -140,8 +141,8 @@ async function main() {
     // assert: brand-logo is visibly rendered with a sensible box.
     assert(brandLayout.ok, 'brand-logo layout probe failed: ' + brandLayout.reason);
     assert(brandLayout.visible, 'brand-logo not visible (display/visibility/opacity)');
-    assert(brandLayout.w >= 60 && brandLayout.h >= 16,
-      `brand-logo too small: ${brandLayout.w.toFixed(1)}×${brandLayout.h.toFixed(1)} (expected ≥60×16)`);
+    assert(brandLayout.w >= 30 && brandLayout.h >= 16,
+      `brand-logo too small: ${brandLayout.w.toFixed(1)}×${brandLayout.h.toFixed(1)} (expected ≥30×16)`);
     console.log('  ✅ legacy .live-dot removed; brand-logo Logo state seam present; brand-logo layout sane');
     passed++;
 
@@ -163,7 +164,7 @@ async function main() {
       const tag = el.tagName.toLowerCase();
       if (tag === 'img') {
         const src = el.getAttribute('src') || '';
-        return { ok: /corescope-hero\.svg($|\?)/.test(src), tag, src };
+        return { ok: /canadaverse-emblem\.svg($|\?)/.test(src), tag, src };
       }
       if (tag === 'svg') {
         const hasText = !!el.querySelector('text');
@@ -189,11 +190,11 @@ async function main() {
     // 5. Both assets actually serve
     const [a, b] = await Promise.all([
       head(BASE + '/img/corescope-logo.svg'),
-      head(BASE + '/img/corescope-hero.svg'),
+      head(BASE + '/brand/canadaverse-emblem.svg'),
     ]);
     if (a.status !== 200 || !/svg/i.test(a.ct)) fail(`/img/corescope-logo.svg → status=${a.status} ct=${a.ct}`);
-    if (b.status !== 200 || !/svg/i.test(b.ct)) fail(`/img/corescope-hero.svg → status=${b.status} ct=${b.ct}`);
-    console.log('  ✅ both /img/corescope-{logo,hero}.svg return 200 with svg content-type');
+    if (b.status !== 200 || !/svg/i.test(b.ct)) fail(`/brand/canadaverse-emblem.svg → status=${b.status} ct=${b.ct}`);
+    console.log('  ✅ upstream and Canadaverse assets return 200 with svg content-type');
     passed++;
 
     // 6. Customizer override path still works after the rebrand. Operators

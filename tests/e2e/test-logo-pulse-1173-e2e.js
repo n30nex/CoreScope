@@ -72,8 +72,8 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
         '.brand-logo missing pulse classes: ' + JSON.stringify(info.full));
       assert(info.mark.exists && info.mark.hasA && info.mark.hasB,
         '.brand-mark-only missing pulse classes: ' + JSON.stringify(info.mark));
-      assert(info.full.aCx === '540' && info.full.bCx === '660',
-        'pulse classes attached to wrong circles (expected cx=540/660): ' + JSON.stringify(info.full));
+      assert(info.full.aCx === '16' && info.full.bCx === '24',
+        'pulse classes attached to wrong circles (expected cx=16/24): ' + JSON.stringify(info.full));
     });
 
     // (c) Test hook installed and pulse() toggles a class on the source circle.

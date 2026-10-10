@@ -1,0 +1,308 @@
+/* Canadaverse identity. Shared tokens keep tables, maps, accounts and the
+   customizer on the same palette. Operator/visitor inline overrides still win.
+   Static decoration only: no animation, canvas, data work or extra requests. */
+:root {
+  color-scheme: light;
+  --font: 'Cascadia Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --mono: 'Cascadia Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --badge-radius: 3px;
+  --surface-0: #f3f8f5;
+  --surface-1: #ffffff;
+  --surface-2: #e9f3ed;
+  --surface-3: #dfeee7;
+  --content-bg: var(--surface-0);
+  --card-bg: var(--surface-1);
+  --detail-bg: var(--surface-1);
+  --input-bg: var(--surface-1);
+  --section-bg: var(--surface-2);
+  --text: #122b22;
+  --text-muted: #446355;
+  --text-subtle: var(--text-muted);
+  --border: #adc7bc;
+  --row-stripe: #edf5ef;
+  --row-hover: #e4f0ea;
+  --selected-bg: #d3eaf2;
+  --nav-bg: #e9f3ed;
+  --nav-bg2: #dfeee7;
+  --nav-text: var(--text);
+  --nav-text-muted: var(--text-muted);
+  --accent: #076a8c;
+  --accent-hover: #085776;
+  --accent-strong: #076a8c;
+  --text-on-accent: #effff7;
+  --link-color: var(--accent);
+  --accent-bg: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 38%, var(--border));
+  --nav-active-bg: var(--accent-bg);
+  --status-green: #19713b;
+  --status-green-text: var(--status-green);
+  --status-green-tint-text: var(--status-green);
+  --sa-chip-observed-fg: var(--status-green);
+  --status-yellow: #795700;
+  --status-yellow-text: var(--status-yellow);
+  --status-red: #b4233d;
+  --status-red-text: var(--status-red);
+  --success: var(--status-green);
+  --warning: var(--status-yellow);
+  --danger: var(--status-red);
+  --logo-accent: var(--accent);
+  --logo-accent-hi: var(--status-green);
+  --logo-muted: var(--text-muted);
+  --hover-bg: var(--row-hover);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --surface-0: #020706;
+  --surface-1: #06100e;
+  --surface-2: #091713;
+  --surface-3: #10271e;
+  --text: #effff7;
+  --text-muted: #87aa9b;
+  --text-subtle: var(--text-muted);
+  --border: #24483c;
+  --row-stripe: #091713;
+  --row-hover: #10271e;
+  --selected-bg: #123c45;
+  --nav-bg: #020706;
+  --nav-bg2: #091713;
+  --accent: #18b7ff;
+  --accent-hover: #65d1ff;
+  --accent-strong: #076a8c;
+  --status-green: #39ff88;
+  --status-yellow: #ffd84d;
+  --status-red: #ff7187;
+  --logo-accent-hi: #9cff38;
+}
+
+body { font-family: var(--font); }
+h1, h2, h3, .brand-text, .home-stat .val, .admin-stat dd {
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  letter-spacing: -.025em;
+}
+button, input, select, textarea { font-family: inherit; }
+::selection { background: var(--selected-bg); color: var(--text); }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* Keep the 52px shell contract used by map/live viewport calculations. */
+.top-nav {
+  border-bottom: 1px solid var(--accent-border);
+  box-shadow: 0 3px 0 var(--accent-bg);
+}
+.nav-brand { flex-shrink: 0; gap: 9px; }
+.nav-brand svg.brand-logo { width: 36px; height: 36px; }
+.nav-brand .brand-mark-only { width: 32px; height: 32px; }
+.nav-brand img.brand-mark-only { width: auto; max-width: 140px; object-fit: contain; }
+.brand-text {
+  max-width: 112px;
+  font-size: 14px;
+  line-height: 1.06;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+  color: var(--nav-text);
+}
+.nav-link, .nav-more-btn, .nav-account-btn, .nav-drawer-title,
+.bottom-nav-label, .bottom-nav-more-title {
+  font-family: var(--mono);
+  letter-spacing: .035em;
+}
+.nav-link { font-size: 12px; text-transform: uppercase; }
+.nav-links .nav-link.active {
+  background: var(--nav-active-bg);
+  color: var(--nav-text);
+  box-shadow: inset 0 -2px var(--accent);
+  border-radius: var(--radius-sm);
+}
+.nav-btn, .nav-account-btn, .nav-more-menu, .nav-fav-dropdown, .nav-account-menu {
+  border-radius: var(--radius-sm);
+}
+.nav-more-menu, .nav-account-menu, .nav-drawer {
+  border-color: var(--accent-border);
+}
+.bottom-nav { border-top-color: var(--accent-border); }
+
+/* Existing component boundaries and density remain intact. */
+.page-header { border-bottom-color: var(--accent-border); }
+.page-header h2 { font-weight: 800; }
+.filter-bar, .panel-right { background: var(--detail-bg); }
+.data-table th, .um-table th {
+  background: var(--section-bg);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+}
+.data-table tbody tr.selected {
+  box-shadow: inset 3px 0 var(--accent);
+}
+.filter-bar input, .filter-bar select, .filter-bar .btn,
+.filter-group .btn, .tab-btn, .btn, .account-btn, .account-field input,
+.um-filters input, .um-filters select, .um-note, .cust-field input,
+.cust-field select, .cust-field textarea {
+  border-radius: var(--radius-sm);
+}
+.tab-btn.active, .filter-group .btn.active, .account-btn-primary,
+.btn-primary, .modal .btn-primary {
+  background: var(--accent-strong);
+  color: var(--text-on-accent);
+}
+.account-btn-primary:hover, .btn-primary:hover, .modal .btn-primary:hover {
+  background: var(--accent-strong);
+  box-shadow: inset 0 0 0 1px var(--text-on-accent);
+}
+.admin-card, .account-card, .um-detail, .modal, .search-box,
+.analytics-stat-card, .analytics-card, .my-node-card, .home-stat,
+.checklist-item, .chooser-btn, .cust-modal, .cust-preset {
+  border-radius: var(--radius-md);
+}
+.admin-card, .account-card, .modal, .search-box, .cust-modal {
+  border-color: var(--accent-border);
+}
+.account-card { border-top: 3px solid var(--accent); }
+.account-page { padding-top: clamp(24px, 5vw, 64px); }
+.account-card h2 { font-size: 1.65rem; font-weight: 800; }
+.admin-card h3, .account-field, .detail-meta dt, .home-stat .lbl {
+  letter-spacing: .04em;
+}
+.leaflet-bar, .leaflet-control-layers, .leaflet-popup-content-wrapper {
+  border-radius: var(--radius-sm);
+  border-color: var(--accent-border);
+  background: var(--surface-1);
+  color: var(--text);
+}
+.leaflet-bar a, .leaflet-bar a:hover {
+  background: var(--surface-1);
+  color: var(--text);
+  border-color: var(--border);
+}
+.leaflet-popup-tip { background: var(--surface-1); }
+.leaflet-container { font-family: var(--font); }
+
+/* Home is an entry to the working analyzer, with direct routes and node search. */
+.home-hero, .home-chooser {
+  width: calc(100% - 2 * var(--gutter));
+  max-width: 1120px;
+  margin: 28px auto 0;
+  padding: clamp(20px, 3.5vw, 48px);
+  border: 1px solid var(--accent-border);
+  border-top: 3px solid var(--accent);
+  background:
+    linear-gradient(125deg, var(--accent-bg), transparent 55%),
+    var(--surface-1);
+  text-align: left;
+}
+.home-hero {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px 24px;
+  align-items: center;
+}
+.home-hero .home-hero-logo {
+  grid-column: 1;
+  grid-row: 1 / 4;
+  width: 88px;
+  height: 88px;
+  object-fit: contain;
+  margin: 0;
+}
+.home-kicker {
+  color: var(--link-color);
+  font: 600 12px/1.4 var(--mono);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.home-hero .home-kicker, .home-hero h1, .home-hero > p { grid-column: 2; }
+.home-hero h1 {
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: clamp(28px, 3vw, 44px);
+  line-height: 1.1;
+  font-weight: 850;
+  margin: 0;
+}
+.home-hero > p { font-size: 14px; line-height: 1.7; margin: 0; max-width: 65ch; }
+.home-hero .home-search-wrap {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-width: none;
+  margin-top: 20px;
+}
+.home-search-wrap input {
+  border-radius: var(--radius-sm);
+  border-color: var(--accent-border);
+  font-size: 14px;
+  min-height: 48px;
+}
+.home-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.home-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--link-color);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.home-action:hover { background: var(--row-hover); border-color: var(--accent); }
+.home-action:first-child { background: var(--accent-strong); color: var(--text-on-accent); }
+:root[data-theme='dark'] .home-action:first-child {
+  background: var(--logo-accent-hi);
+  border-color: var(--logo-accent-hi);
+  color: var(--surface-0);
+}
+.home-chooser { max-width: 820px; margin-top: clamp(28px, 8vh, 96px); }
+.home-chooser .home-hero-logo { width: 72px; height: 72px; margin: 0 0 24px; }
+.home-chooser h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.1; margin: 12px 0; }
+.home-chooser p { font-size: 14px; line-height: 1.7; }
+.chooser-options { justify-content: stretch; }
+.chooser-btn { flex: 1 1 240px; align-items: flex-start; text-align: left; border-width: 1px; }
+.chooser-icon { color: var(--link-color); }
+.chooser-btn:hover { transform: none; background: var(--row-hover); }
+.home-stats { max-width: 1120px; padding: 20px 0; width: calc(100% - 2 * var(--gutter)); gap: 12px; }
+.home-stat { text-align: left; border-top: 2px solid var(--accent-border); }
+.home-stat .val { color: var(--link-color); font-weight: 800; }
+.home-stat .lbl { text-transform: uppercase; font-size: 12px; }
+.home-checklist, .home-footer { max-width: 1120px; }
+.home-attribution { margin-top: 24px; color: var(--text-muted); font-size: 12px; line-height: 1.8; }
+.home-attribution a { color: var(--link-color); text-decoration: underline; text-underline-offset: 3px; }
+
+@media (max-width: 768px) {
+  .brand-text { max-width: 190px; }
+  .home-hero { grid-template-columns: 48px minmax(0, 1fr); gap: 10px 14px; }
+  .home-hero .home-hero-logo { width: 48px; height: 48px; grid-row: 1 / 3; }
+  .home-hero > p { grid-column: 1 / -1; margin-top: 8px; }
+  .home-hero, .home-chooser { margin-top: 16px; padding: 20px; }
+  .home-kicker { font-size: 11px; letter-spacing: .07em; }
+  .home-actions { gap: 8px; }
+  .home-action { flex: 1 1 180px; justify-content: space-between; }
+}
+
+@media (max-width: 640px) {
+  /* The mono labels need more width than the upstream font. Keep the VCR
+     in one row at 320px, with 24px targets and the full-size mobile clock. */
+  .vcr-bar { gap: 2px; padding-inline: 2px; }
+  .vcr-bar > .vcr-controls { gap: 2px; }
+  .vcr-btn { min-width: 24px; padding-inline: 4px; }
+  .vcr-scope-btn { min-width: 24px; padding-inline: 3px; }
+  .vcr-timeline-container { min-width: 24px; }
+}
+
+@media (max-width: 600px) {
+  /* Packet actions share this row on phones. Let the name wrap before
+     shrinking their 48px touch targets, including with fallback fonts. */
+  .nav-brand { flex-shrink: 1; min-width: 0; }
+  .nav-brand > svg, .nav-brand > img, #navPageActions { flex-shrink: 0; }
+}
