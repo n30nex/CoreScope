@@ -299,3 +299,10 @@ textarea:focus-visible, summary:focus-visible {
   .vcr-scope-btn { min-width: 24px; padding-inline: 3px; }
   .vcr-timeline-container { min-width: 24px; }
 }
+
+@media (max-width: 600px) {
+  /* Packet actions share this row on phones. Let the name wrap before
+     shrinking their 48px touch targets, including with fallback fonts. */
+  .nav-brand { flex-shrink: 1; min-width: 0; }
+  .nav-brand > svg, .nav-brand > img, #navPageActions { flex-shrink: 0; }
+}
