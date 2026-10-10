@@ -2531,7 +2531,7 @@ console.log('\n=== customize-v2.js: core behavior ===');
     const server = { theme: { accent: '#111111' }, home: null };
     const effective = v2.computeEffective(server, {});
     assert.ok(effective.home, 'home should not be null');
-    assert.strictEqual(effective.home.heroTitle, 'CoreScope');
+    assert.strictEqual(effective.home.heroTitle, 'Canadaverse CoreScope');
     assert.ok(Array.isArray(effective.home.steps), 'steps should be an array');
     assert.ok(effective.home.steps.length > 0, 'steps should not be empty');
     assert.ok(Array.isArray(effective.home.footerLinks), 'footerLinks should be an array');

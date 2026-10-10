@@ -1,7 +1,7 @@
 const REPO_ROOT = require('path').resolve(__dirname, '..', '..');
 /**
  * Playwright E2E tests — proof of concept
- * Runs against prod (analyzer.00id.net), read-only.
+ * Runs against a local fixture server selected with BASE_URL.
  * Usage: node test-e2e-playwright.js
  */
 const { chromium } = require('playwright');
@@ -314,26 +314,19 @@ async function run() {
     assert(nav, 'Nav bar not found');
   });
 
-  // #1137 follow-up: Aldrich webfont must actually load so the navbar logo SVG
-  // renders in the intended typeface (not the silent monospace fallback).
-  await test('#1137 Aldrich webfont is loaded for navbar logo SVG', async () => {
+  // The fork uses a shared SVG emblem and native-font text rather than the
+  // upstream SVG wordmark. Verify the served asset and readable identity.
+  await test('Canadaverse navbar emblem and wordmark load', async () => {
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
-    // Explicitly request the font (waits for download). On the broken state
-    // there is no @font-face for Aldrich, so no FontFace matches and check()
-    // stays false — the assertion below fails on behavior, not infra.
-    const aldrichLoaded = await page.evaluate(async () => {
-      try { await document.fonts.load('1em Aldrich'); } catch (_) {}
-      await document.fonts.ready;
-      return document.fonts.check('1em Aldrich');
-    });
-    assert(aldrichLoaded, 'document.fonts.check("1em Aldrich") returned false — Aldrich is not loaded');
-    // Sanity: the inline SVG <text> still declares Aldrich in its font-family.
-    const fontFamily = await page.evaluate(() => {
-      const t = document.querySelector('nav svg text, .navbar svg text, header svg text');
-      return t ? (t.getAttribute('font-family') || getComputedStyle(t).fontFamily) : null;
-    });
-    assert(fontFamily && /aldrich/i.test(fontFamily),
-      `Navbar SVG <text> font-family should include Aldrich, got: ${fontFamily}`);
+    const emblem = await page.locator('.nav-brand .brand-logo image').getAttribute('href');
+    const asset = await page.request.get(new URL(emblem, BASE).href);
+    assert(asset.ok() && /image\/svg\+xml/.test(asset.headers()['content-type']), 'Brand emblem must be served as SVG');
+    const wordmark = await page.locator('.brand-text').evaluate(el => ({
+      text: el.textContent, font: getComputedStyle(el).fontFamily,
+      width: el.getBoundingClientRect().width
+    }));
+    assert(wordmark.text.includes('Canadaverse') && wordmark.width > 0, 'Brand wordmark must be visible');
+    assert(/system-ui/i.test(wordmark.font), 'Brand wordmark should use the native headline font');
   });
 
   // Test 6: Theme customizer opens (reuses home page from test 1)

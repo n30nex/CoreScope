@@ -1895,8 +1895,8 @@ func TestConfigThemeHomeDefaults(t *testing.T) {
 	if !ok || home == nil {
 		t.Fatal("expected non-null home object in theme response")
 	}
-	if home["heroTitle"] != "CoreScope" {
-		t.Errorf("expected heroTitle=CoreScope, got %v", home["heroTitle"])
+	if home["heroTitle"] != "Canadaverse CoreScope" {
+		t.Errorf("expected heroTitle=Canadaverse CoreScope, got %v", home["heroTitle"])
 	}
 	if home["heroSubtitle"] == nil {
 		t.Error("expected heroSubtitle in home defaults")

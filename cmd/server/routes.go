@@ -597,35 +597,35 @@ func (s *Server) handleConfigTheme(w http.ResponseWriter, r *http.Request) {
 	theme := LoadTheme(".")
 
 	branding := mergeMap(map[string]interface{}{
-		"siteName": "CoreScope",
+		"siteName": "Canadaverse CoreScope",
 		"tagline":  "Real-time MeshCore LoRa mesh network analyzer",
 	}, s.cfg.Branding, theme.Branding)
 
 	themeColors := mergeMap(map[string]interface{}{
-		"accent":       "#4a9eff",
-		"accentHover":  "#6db3ff",
-		"navBg":        "#0f0f23",
-		"navBg2":       "#1a1a2e",
-		"navText":      "#ffffff",
-		"navTextMuted": "#cbd5e1",
-		"background":   "#f4f5f7",
-		"text":         "#1a1a2e",
-		"textMuted":    "#5b6370",
-		"border":       "#e2e5ea",
+		"accent":       "#076a8c",
+		"accentHover":  "#085776",
+		"navBg":        "#e9f3ed",
+		"navBg2":       "#dfeee7",
+		"navText":      "#122b22",
+		"navTextMuted": "#446355",
+		"background":   "#f3f8f5",
+		"text":         "#122b22",
+		"textMuted":    "#446355",
+		"border":       "#adc7bc",
 		"surface1":     "#ffffff",
-		"surface2":     "#ffffff",
-		"surface3":     "#ffffff",
-		"sectionBg":    "#eef2ff",
+		"surface2":     "#e9f3ed",
+		"surface3":     "#dfeee7",
+		"sectionBg":    "#e9f3ed",
 		"cardBg":       "#ffffff",
-		"contentBg":    "#f4f5f7",
+		"contentBg":    "#f3f8f5",
 		"detailBg":     "#ffffff",
 		"inputBg":      "#ffffff",
-		"rowStripe":    "#f9fafb",
-		"rowHover":     "#eef2ff",
-		"selectedBg":   "#dbeafe",
-		"statusGreen":  "#22c55e",
-		"statusYellow": "#eab308",
-		"statusRed":    "#ef4444",
+		"rowStripe":    "#edf5ef",
+		"rowHover":     "#e4f0ea",
+		"selectedBg":   "#d3eaf2",
+		"statusGreen":  "#19713b",
+		"statusYellow": "#795700",
+		"statusRed":    "#b4233d",
 	}, s.cfg.Theme, theme.Theme)
 
 	nodeColors := mergeMap(map[string]interface{}{
@@ -637,30 +637,30 @@ func (s *Server) handleConfigTheme(w http.ResponseWriter, r *http.Request) {
 	}, s.cfg.NodeColors, theme.NodeColors)
 
 	themeDark := mergeMap(map[string]interface{}{
-		"accent":       "#4a9eff",
-		"accentHover":  "#6db3ff",
-		"navBg":        "#0f0f23",
-		"navBg2":       "#1a1a2e",
-		"navText":      "#ffffff",
-		"navTextMuted": "#cbd5e1",
-		"background":   "#0f0f23",
-		"text":         "#e2e8f0",
-		"textMuted":    "#a8b8cc",
-		"border":       "#334155",
-		"surface1":     "#1a1a2e",
-		"surface2":     "#232340",
-		"cardBg":       "#1a1a2e",
-		"contentBg":    "#0f0f23",
-		"detailBg":     "#232340",
-		"inputBg":      "#1e1e34",
-		"rowStripe":    "#1e1e34",
-		"rowHover":     "#2d2d50",
-		"selectedBg":   "#1e3a5f",
-		"statusGreen":  "#22c55e",
-		"statusYellow": "#eab308",
-		"statusRed":    "#ef4444",
-		"surface3":     "#2d2d50",
-		"sectionBg":    "#1e1e34",
+		"accent":       "#18b7ff",
+		"accentHover":  "#65d1ff",
+		"navBg":        "#020706",
+		"navBg2":       "#091713",
+		"navText":      "#effff7",
+		"navTextMuted": "#87aa9b",
+		"background":   "#020706",
+		"text":         "#effff7",
+		"textMuted":    "#87aa9b",
+		"border":       "#24483c",
+		"surface1":     "#06100e",
+		"surface2":     "#091713",
+		"surface3":     "#10271e",
+		"sectionBg":    "#091713",
+		"cardBg":       "#06100e",
+		"contentBg":    "#020706",
+		"detailBg":     "#091713",
+		"inputBg":      "#06100e",
+		"rowStripe":    "#091713",
+		"rowHover":     "#10271e",
+		"selectedBg":   "#123c45",
+		"statusGreen":  "#39ff88",
+		"statusYellow": "#ffd84d",
+		"statusRed":    "#ff7187",
 	}, s.cfg.ThemeDark, theme.ThemeDark)
 	// #1799 PR #1804 r1 item 6: REQUEST→REQ rename is a BREAKING change to
 	// the /api/config/theme shape. Compat policy for >=1 release cycle:
@@ -687,8 +687,8 @@ func (s *Server) handleConfigTheme(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defaultHome := map[string]interface{}{
-		"heroTitle":    "CoreScope",
-		"heroSubtitle": "Real-time MeshCore LoRa mesh network analyzer",
+		"heroTitle":    "Canadaverse CoreScope",
+		"heroSubtitle": "Follow the mesh. Inspect packets, explore routes, and find your nodes.",
 		"steps": []interface{}{
 			// #1648 M5: defaults use 'ph:<name>' Phosphor sprite tokens.
 			// The frontend render path (home.js _renderHomeGlyph, customize-v2.js
@@ -696,7 +696,7 @@ func (s *Server) handleConfigTheme(w http.ResponseWriter, r *http.Request) {
 			// operator config.json that still stores raw emoji values continues
 			// to render as-is — this changes ONLY the built-in default set.
 			map[string]interface{}{"emoji": "ph:bluetooth", "title": "Connect via Bluetooth", "description": "Flash **BLE companion** firmware from [MeshCore Flasher](https://flasher.meshcore.io/).\n- Screenless devices: default PIN `123456`\n- Screen devices: random PIN shown on display\n- If pairing fails: forget device, reboot, re-pair"},
-			map[string]interface{}{"emoji": "ph:radio", "title": "Set the right frequency preset", "description": "**US Recommended:**\n`910.525 MHz · BW 62.5 kHz · SF 7 · CR 5`\nSelect **\"US Recommended\"** in the app or flasher."},
+			map[string]interface{}{"emoji": "ph:radio", "title": "Choose your local radio preset", "description": "Use the preset published by your local mesh community. See the [Canadaverse MeshCore guide](https://canadaverse.org/meshcore/) for regional setup resources."},
 			map[string]interface{}{"emoji": "ph:broadcast", "title": "Advertise yourself", "description": "Tap the signal icon → **Flood** to broadcast your node to the mesh. Companions only advert when you trigger it manually."},
 			map[string]interface{}{"emoji": "ph:repeat", "title": "Check \"Heard N repeats\"", "description": "- **\"Sent\"** = transmitted, no confirmation\n- **\"Heard 0 repeats\"** = no repeater picked it up\n- **\"Heard 1+ repeats\"** = you're on the mesh!"},
 		},

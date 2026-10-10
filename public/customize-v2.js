@@ -7,14 +7,14 @@
   // ── Constants ──
 
   var DEFAULT_HOME = {
-    heroTitle: 'CoreScope',
-    heroSubtitle: 'Real-time MeshCore LoRa mesh network analyzer',
+    heroTitle: 'Canadaverse CoreScope',
+    heroSubtitle: 'Follow the mesh. Inspect packets, explore routes, and find your nodes.',
     // #1648 M5: defaults use 'ph:<name>' sprite tokens. Back-compat: the
     // render path (renderConfigGlyph) ALSO accepts legacy emoji strings
     // for operators with stored config values.
     steps: [
       { emoji: 'ph:bluetooth', title: 'Connect via Bluetooth', description: 'Flash **BLE companion** firmware from [MeshCore Flasher](https://flasher.meshcore.io/).\n- Screenless devices: default PIN `123456`\n- Screen devices: random PIN shown on display\n- If pairing fails: forget device, reboot, re-pair' },
-      { emoji: 'ph:radio', title: 'Set the right frequency preset', description: '**US Recommended:**\n`910.525 MHz · BW 62.5 kHz · SF 7 · CR 5`\nSelect **"US Recommended"** in the app or flasher.' },
+      { emoji: 'ph:radio', title: 'Choose your local radio preset', description: 'Use the preset published by your local mesh community. See the [Canadaverse MeshCore guide](https://canadaverse.org/meshcore/) for regional setup resources.' },
       { emoji: 'ph:broadcast', title: 'Advertise yourself', description: 'Tap the signal icon → **Flood** to broadcast your node to the mesh. Companions only advert when you trigger it manually.' },
       { emoji: 'ph:repeat', title: 'Check "Heard N repeats"', description: '- **"Sent"** = transmitted, no confirmation\n- **"Heard 0 repeats"** = no repeater picked it up\n- **"Heard 1+ repeats"** = you\'re on the mesh!' }
     ],
@@ -59,25 +59,29 @@
 
   var THEME_COLOR_KEYS = Object.keys(THEME_CSS_MAP).filter(function (k) { return k !== 'font' && k !== 'mono'; });
 
-  // ── Brand logo swap helper (PR #1137) ──
-  // The default navbar brand logo is an inline <svg class="brand-logo"> so it
-  // inherits page CSS vars (--logo-text / --logo-accent / etc.). When an
-  // operator overrides branding.logoUrl in the customizer they expect a
-  // remote image — swap the inline <svg> for an <img>. Going back to the
-  // default URL or clearing the override swaps the <img> back to the inline
-  // <svg>. Layout dimensions (width=111 height=36) are preserved either way.
+  // Keep the original marks so clearing an operator logo restores the brand
+  // immediately, including the existing packet indicators on desktop/mobile.
+  var _brandLogoDefaults = {};
   function _setBrandLogoUrl(url, alt) {
-    var node = document.querySelector('.nav-brand .brand-logo');
-    if (!node) return;
-    if (url) {
+    ['brand-logo', 'brand-mark-only'].forEach(function (className) {
+      var node = document.querySelector('.nav-brand .' + className);
+      if (!node) return;
+      if (!_brandLogoDefaults[className]) _brandLogoDefaults[className] = node.cloneNode(true);
+      if (!url) {
+        if (node.tagName.toLowerCase() === 'img') {
+          var restored = _brandLogoDefaults[className].cloneNode(true);
+          if (node.classList.contains('logo-disconnected')) restored.classList.add('logo-disconnected');
+          node.parentNode.replaceChild(restored, node);
+        }
+        return;
+      }
       if (node.tagName.toLowerCase() === 'img') {
         node.setAttribute('src', url);
         if (alt != null) node.setAttribute('alt', alt);
         return;
       }
-      // swap inline <svg> → <img>
       var img = document.createElement('img');
-      img.className = 'brand-logo';
+      img.className = node.className.baseVal || node.className;
       img.setAttribute('src', url);
       img.setAttribute('alt', alt || node.getAttribute('aria-label') || 'Brand');
       // #1450 — DO NOT set width/height attrs. CSS img.brand-logo handles
@@ -85,18 +89,7 @@
       // natural image aspect ratio is preserved instead of being squished
       // into the default SVG's 125x36 pill box.
       node.parentNode.replaceChild(img, node);
-    } else {
-      if (node.tagName.toLowerCase() !== 'img') {
-        if (alt != null) node.setAttribute('aria-label', alt);
-        return;
-      }
-      // swap <img> → inline <svg> by clearing the src; here we just keep the
-      // <img> in place because we don't have the SVG markup at runtime
-      // (it lives in index.html). The next page reload restores the inline
-      // SVG. Setting src to the default URL is a graceful intermediate.
-      node.setAttribute('src', 'img/corescope-logo.svg');
-      if (alt != null) node.setAttribute('alt', alt);
-    }
+    });
   }
   function _setBrandAlt(alt) {
     var node = document.querySelector('.nav-brand .brand-logo');
@@ -126,23 +119,66 @@
   // ── Presets (copied from v1 customize.js) ──
   var PRESETS = {
     default: {
-      name: 'Default', desc: 'MeshCore blue',
-      preview: ['#4a9eff', '#0f0f23', '#f4f5f7', '#1a1a2e', '#22c55e'],
-      theme: {
-        accent: '#4a9eff', navBg: '#0f0f23', navText: '#ffffff', background: '#f4f5f7', text: '#1a1a2e',
-        statusGreen: '#22c55e', statusYellow: '#eab308', statusRed: '#ef4444',
-        accentHover: '#6db3ff', navBg2: '#1a1a2e', navTextMuted: '#cbd5e1', navActiveBg: 'rgba(74,158,255,0.15)', textMuted: '#5b6370', border: '#e2e5ea',
-        surface1: '#ffffff', surface2: '#ffffff', cardBg: '#ffffff', contentBg: '#f4f5f7',
-        detailBg: '#ffffff', inputBg: '#ffffff', rowStripe: '#f9fafb', rowHover: '#eef2ff', selectedBg: '#dbeafe',
-        surface3: '#ffffff', sectionBg: '#eef2ff'
+      "name": "Canadaverse",
+      "desc": "Cyan signals / forest black",
+      "preview": [
+        "#020706",
+        "#18b7ff",
+        "#9cff38",
+        "#effff7",
+        "#39ff88"
+      ],
+      "theme": {
+        "accent": "#076a8c",
+        "accentHover": "#085776",
+        "navBg": "#e9f3ed",
+        "navBg2": "#dfeee7",
+        "navText": "#122b22",
+        "navTextMuted": "#446355",
+        "background": "#f3f8f5",
+        "text": "#122b22",
+        "textMuted": "#446355",
+        "border": "#adc7bc",
+        "surface1": "#ffffff",
+        "surface2": "#e9f3ed",
+        "surface3": "#dfeee7",
+        "sectionBg": "#e9f3ed",
+        "cardBg": "#ffffff",
+        "contentBg": "#f3f8f5",
+        "detailBg": "#ffffff",
+        "inputBg": "#ffffff",
+        "rowStripe": "#edf5ef",
+        "rowHover": "#e4f0ea",
+        "selectedBg": "#d3eaf2",
+        "statusGreen": "#19713b",
+        "statusYellow": "#795700",
+        "statusRed": "#b4233d"
       },
-      themeDark: {
-        accent: '#4a9eff', navBg: '#0f0f23', navText: '#ffffff', background: '#0f0f23', text: '#e2e8f0',
-        statusGreen: '#22c55e', statusYellow: '#eab308', statusRed: '#ef4444',
-        accentHover: '#6db3ff', navBg2: '#1a1a2e', navTextMuted: '#cbd5e1', navActiveBg: 'rgba(74,158,255,0.18)', textMuted: '#a8b8cc', border: '#334155',
-        surface1: '#1a1a2e', surface2: '#232340', cardBg: '#1a1a2e', contentBg: '#0f0f23',
-        detailBg: '#232340', inputBg: '#1e1e34', rowStripe: '#1e1e34', rowHover: '#2d2d50', selectedBg: '#1e3a5f',
-        surface3: '#2d2d50', sectionBg: '#1e1e34'
+      "themeDark": {
+        "accent": "#18b7ff",
+        "accentHover": "#65d1ff",
+        "navBg": "#020706",
+        "navBg2": "#091713",
+        "navText": "#effff7",
+        "navTextMuted": "#87aa9b",
+        "background": "#020706",
+        "text": "#effff7",
+        "textMuted": "#87aa9b",
+        "border": "#24483c",
+        "surface1": "#06100e",
+        "surface2": "#091713",
+        "surface3": "#10271e",
+        "sectionBg": "#091713",
+        "cardBg": "#06100e",
+        "contentBg": "#020706",
+        "detailBg": "#091713",
+        "inputBg": "#06100e",
+        "rowStripe": "#091713",
+        "rowHover": "#10271e",
+        "selectedBg": "#123c45",
+        "statusGreen": "#39ff88",
+        "statusYellow": "#ffd84d",
+        "statusRed": "#ff7187"
       }
     },
     ocean: {
@@ -795,8 +831,8 @@
         var brandEl = document.querySelector('.brand-text');
         if (brandEl) brandEl.textContent = br.siteName;
       }
+      _setBrandLogoUrl(br.logoUrl || '', br.siteName || null);
       if (br.logoUrl) {
-        _setBrandLogoUrl(br.logoUrl, br.siteName || null);
         var iconEl = document.querySelector('.brand-icon');
         if (iconEl) iconEl.innerHTML = '<img src="' + br.logoUrl + '" style="height:24px" onerror="this.style.display=\'none\'">';
       }
