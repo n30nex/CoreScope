@@ -82,6 +82,18 @@ func (s *Store) CreatePending(email, displayName, passwordHash string) (*User, e
 	return s.GetByID(id)
 }
 
+// UpdatePendingRegistration replaces both registration fields only while the
+// account is still pending. A caller's earlier lookup cannot authorize a write
+// after activation, disablement or deletion has committed.
+func (s *Store) UpdatePendingRegistration(id int64, passwordHash, displayName string) error {
+	err := expectOne(s.db.Exec(`UPDATE users SET password_hash = `+s.p(1)+`, display_name = `+s.p(2)+`
+		WHERE id = `+s.p(3)+` AND status = 'pending'`, passwordHash, displayName, id))
+	if errors.Is(err, ErrNotFound) {
+		return ErrAccountChanged
+	}
+	return err
+}
+
 func (s *Store) GetByID(id int64) (*User, error) {
 	return scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE id = `+s.p(1), id))
 }
