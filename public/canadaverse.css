@@ -114,6 +114,14 @@ textarea:focus-visible, summary:focus-visible {
   letter-spacing: .035em;
 }
 .nav-link { font-size: 12px; text-transform: uppercase; }
+/* Priority+ keeps primary links and the active page inline. Compact only
+   when the measured desktop strip cannot fit; mobile keeps its own layout. */
+.nav-hide-stats .nav-stats { display: none; }
+.nav-compact .brand-text { display: none; }
+.nav-compact .nav-left { gap: var(--space-xs); }
+.nav-compact .nav-links .nav-link { padding-inline: 4px; }
+.nav-compact .nav-more-btn { padding-inline: 6px; }
+.nav-compact .nav-account-label { max-width: 6ch; }
 .nav-links .nav-link.active {
   background: var(--nav-active-bg);
   color: var(--nav-text);
