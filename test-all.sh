@@ -18,7 +18,9 @@ node tests/unit/test-a11y-axe-routes-coverage.js
 node tests/unit/test-admin-dashboard-ui.js
 node tests/unit/test-aging.js
 node tests/unit/test-analytics-channels-integration.js
+node tests/unit/test-analytics-loading.js
 node tests/unit/test-anl1-tooltip-render.js
+node tests/unit/test-api-inflight-cleanup.js
 node tests/unit/test-area-filter.js
 node tests/unit/test-canadaverse-branding.js
 node tests/unit/test-channel-color-picker.js
