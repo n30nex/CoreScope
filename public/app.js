@@ -12,6 +12,29 @@ function payloadTypeColor(n) { return PAYLOAD_COLORS[n] || 'unknown'; }
 function isTransportRoute(rt) { return rt === 0 || rt === 3; }
 /** Byte offset of path_len in raw_hex: 5 for transport routes (4 bytes of next/last hop codes precede it), 1 otherwise. */
 function getPathLenOffset(routeType) { return isTransportRoute(routeType) ? 5 : 1; }
+/**
+ * Path hash size (1-3 bytes) the originator chose, from raw_hex's path byte, or
+ * 0 when the packet carries none. Same rule as packetpath.HashSize on the
+ * server; both run test-fixtures/path-hash-size-cases.json. A flood packet
+ * always encodes it (firmware sendFlood sets it before the first hop), a direct
+ * packet with no hops does not (sendZeroHop writes 0x00, and an exhausted
+ * direct path has no hash left to size), and TRACE path bytes are SNR readings.
+ */
+function pathHashSize(rawHex) {
+  // Names as in internal/packetpath/route.go.
+  const PAYLOAD_TRACE = 9, ROUTE_DIRECT = 2, ROUTE_TRANSPORT_DIRECT = 3;
+  if (typeof rawHex !== 'string' || !/^[0-9a-f]{2}/i.test(rawHex)) return 0;
+  const header = parseInt(rawHex.slice(0, 2), 16);
+  if (((header >> 2) & 0x0F) === PAYLOAD_TRACE) return 0;
+  const routeType = header & 0x03;
+  const off = getPathLenOffset(routeType) * 2;
+  const pathHex = rawHex.slice(off, off + 2);
+  if (!/^[0-9a-f]{2}$/i.test(pathHex)) return 0;
+  const pathByte = parseInt(pathHex, 16);
+  if ((pathByte & 0x3F) === 0 && (routeType === ROUTE_DIRECT || routeType === ROUTE_TRANSPORT_DIRECT)) return 0;
+  const size = (pathByte >> 6) + 1;
+  return size > 3 ? 0 : size;
+}
 function transportBadge(rt) { return isTransportRoute(rt) ? ' <span class="badge badge-transport" title="' + routeTypeName(rt) + '">T</span>' : ''; }
 
 /**
@@ -165,7 +188,12 @@ async function api(path, { ttl = 0, bust = false } = {}) {
         _apiPerf.log.push({ path, ms: Math.round(ms), time: Date.now() });
         if (_apiPerf.log.length > 200) _apiPerf.log.shift();
         if (ms > 500) console.warn(`[SLOW API] ${path} took ${Math.round(ms)}ms`);
-        if (ttl > 0) _apiCache.set(path, { data, expires: Date.now() + ttl });
+        // #1997: never cache a "not ready yet" body. The lazy distance
+        // index answers 202 with {status:"building"} until it is built, and
+        // res.ok is true for 202, so caching it would serve that placeholder
+        // back to every retry for the whole TTL — the page would stay in its
+        // building state for minutes after the index was ready.
+        if (ttl > 0 && res.status !== 202) _apiCache.set(path, { data, expires: Date.now() + ttl });
         return data;
       }
     } finally {
@@ -232,11 +260,25 @@ async function fetchAllNodes(extraQuery = '', { ttl = 0, pageSize = 500, safetyC
       : (Array.isArray(data) ? data : []);
     accumulated.push.apply(accumulated, page);
     if (offset === 0) counts = (data && data.counts) || {};
-    // Canonical stop: a short page is the end. The server's `total` is a real
-    // COUNT(*) for the query, but the handler overwrites it with the filtered
-    // length under area/geo/blacklist filtering — so we never loop on it, nor
-    // surface it; a short page is the reliable end-of-data signal. See #1606.
-    if (page.length < pageSize) break;
+    // Canonical stop: the server's `has_more`. Neither of the other two signals
+    // can be trusted — the handler rewrites `total` to the filtered length, AND
+    // the same filters (blacklist / hidden prefix / geo-filter / area) drop rows
+    // from the page itself, so a page can be short while later pages still hold
+    // rows. #1606 stopped on a short page, which is correct only on deployments
+    // where nothing is ever filtered; elsewhere one filtered node in page 1
+    // stranded every node behind it. `has_more` is computed server-side before
+    // those filters run.
+    // An empty page always ends it: there is nothing here, and OFFSET means
+    // nothing behind it either. Checked first so a server reporting has_more
+    // against a concurrently-shrinking table cannot spin us to safetyCap.
+    if (page.length === 0) break;
+    if (data && typeof data.has_more === 'boolean') {
+      if (!data.has_more) break;
+      continue;
+    }
+    // Server predates `has_more`: fall back to a zero-length page, the only
+    // remaining end-of-data signal that filtering cannot fake. Costs one extra
+    // request per load against an old server; a short page no longer stops us.
   }
   // Dedup by public_key: the sort window (last_seen DESC by default) can shift
   // under concurrent ingest, repeating a row across a page boundary. Rows
@@ -635,6 +677,18 @@ function buildHexLegend(ranges) {
 let ws = null;
 let wsListeners = [];
 
+// #1074: a half-open connection (a proxy idle timeout, NAT state dropped, a
+// laptop that slept) can keep a WebSocket OPEN for minutes without onclose
+// ever firing, and the page just stops updating. The server writes
+// WS_HEARTBEAT on every 30s ping tick (cmd/server/websocket.go), so a socket
+// that has received nothing for WS_STALE_MS is replaced. 75s tolerates one
+// late or lost heartbeat.
+const WS_STALE_MS = 75000;
+const WS_HEARTBEAT = '{"type":"heartbeat"}';
+let wsLastMessageAt = 0;
+let wsWatchdogTimer = null;
+let wsReconnectTimer = null;
+
 // --- Brand-logo packet-driven pulse (#1173) ---
 // Replaces the legacy live-dot indicator. Class-toggle only (CSS animations); colors come from
 // --logo-accent / --logo-accent-hi tokens. Test seam at window.__corescopeLogo.
@@ -778,16 +832,60 @@ const Logo = (function () {
   return api;
 })();
 
+// Detach before closing: a half-open socket may not fire onclose until the
+// browser gives up on the closing handshake, and a late onclose from a socket
+// already replaced would schedule a second connection.
+function dropWS() {
+  clearTimeout(wsWatchdogTimer);
+  wsWatchdogTimer = null;
+  if (!ws) return;
+  const old = ws;
+  ws = null;
+  old.onopen = old.onclose = old.onerror = old.onmessage = null;
+  try { old.close(); } catch (_) {}
+}
+
+function checkWSLiveness() {
+  if (!ws) return;
+  clearTimeout(wsWatchdogTimer);
+  const silentMs = Date.now() - wsLastMessageAt;
+  // A negative reading means the wall clock stepped back since the last
+  // message, so the silence can no longer be measured: replace the socket
+  // like a stale one rather than re-arm for the size of the step. Date.now()
+  // stays the clock because performance.now() may not count time asleep.
+  if (silentMs >= 0 && silentMs < WS_STALE_MS) {
+    wsWatchdogTimer = setTimeout(checkWSLiveness, WS_STALE_MS - silentMs);
+    return;
+  }
+  Logo.setConnected(false);
+  connectWS();
+}
+
 function connectWS() {
+  clearTimeout(wsReconnectTimer);
+  wsReconnectTimer = null;
+  dropWS();
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}`);
-  ws.onopen = () => Logo.setConnected(true);
-  ws.onclose = () => {
+  const sock = new WebSocket(`${proto}//${location.host}`);
+  ws = sock;
+  // Measured from creation, so a handshake that never completes is caught too.
+  wsLastMessageAt = Date.now();
+  wsWatchdogTimer = setTimeout(checkWSLiveness, WS_STALE_MS);
+  sock.onopen = () => Logo.setConnected(true);
+  sock.onclose = () => {
+    clearTimeout(wsWatchdogTimer);
+    wsWatchdogTimer = null;
     Logo.setConnected(false);
-    setTimeout(connectWS, 3000);
+    // WS_RECONNECT_MS comes from roles.js and is settable as cacheTTL's
+    // sibling `wsReconnectMs`. It used to apply only to the live map's own
+    // socket; now that every view shares this one, the operator's setting
+    // applies here or nowhere.
+    wsReconnectTimer = setTimeout(connectWS, window.WS_RECONNECT_MS || 3000);
   };
-  ws.onerror = () => ws.close();
-  ws.onmessage = (e) => {
+  sock.onerror = () => sock.close();
+  sock.onmessage = (e) => {
+    wsLastMessageAt = Date.now();
+    if (e.data === WS_HEARTBEAT) return;
     Logo.pulse(e);
     try {
       const msg = JSON.parse(e.data);
@@ -802,6 +900,15 @@ function connectWS() {
       wsListeners.forEach(fn => fn(msg));
     } catch {}
   };
+}
+
+// Timers in a hidden or sleeping tab can run late, so check as soon as the
+// page is back instead of waiting out a watchdog that may be minutes behind.
+function setupWSResumeCheck() {
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkWSLiveness();
+  });
+  window.addEventListener('online', checkWSLiveness);
 }
 
 function onWS(fn) { wsListeners.push(fn); }
@@ -862,16 +969,11 @@ function pullReconnect() {
   // If WS is connected (readyState OPEN), give a brief "Connected"
   // confirmation but still cycle so the user sees fresh data.
   const wasOpen = ws && ws.readyState === 1;
-  if (wasOpen) {
-    _showPullToast('Connected', true);
-    // Fast cycle: close and let onclose reconnect immediately
-    try { ws.close(); } catch (e) {}
-  } else {
-    _showPullToast('Reconnecting…', true);
-    try { if (ws) ws.close(); } catch (e) {}
-    // onclose handler schedules reconnect; force one now in case ws was null
-    try { connectWS(); } catch (e) {}
-  }
+  _showPullToast(wasOpen ? 'Connected' : 'Reconnecting…', true);
+  // Replace the socket now in both cases: an OPEN socket may be half-open,
+  // and its onclose can take about a minute to fire after close().
+  // connectWS() detaches and closes the old socket itself.
+  try { connectWS(); } catch (e) {}
 }
 
 function _isTouchDevice() {
@@ -1179,7 +1281,7 @@ function navigate() {
       else { app.setAttribute('tabindex', '-1'); app.focus({ preventScroll: true }); }
     });
   } else {
-    app.innerHTML = `<div style="padding:40px;text-align:center;color:#6b7280"><h2>${route}</h2><p>Page not yet implemented.</p></div>`;
+    app.innerHTML = `<div style="padding:40px;text-align:center;color:#6b7280"><h2>${escapeHtml(route)}</h2><p>Page not yet implemented.</p></div>`;
   }
 }
 
@@ -1197,6 +1299,7 @@ window.addEventListener('timestamp-mode-changed', () => {
 });
 window.addEventListener('DOMContentLoaded', () => {
   connectWS();
+  setupWSResumeCheck();
   setupPullToReconnect();
 
   // --- Dark Mode ---
@@ -1631,7 +1734,7 @@ window.addEventListener('DOMContentLoaded', () => {
         const statusLabel = age === null ? 'unknown' : age < HEALTH_THRESHOLDS.nodeDegradedMs ? 'healthy' : age < HEALTH_THRESHOLDS.nodeSilentMs ? 'degraded' : 'silent';
         return '<a href="#/nodes/' + pk + '" class="fav-dd-item" data-key="' + pk + '">'
           + '<span class="fav-dd-status ' + statusCls + '" title="' + statusLabel + '" aria-label="' + statusLabel + '"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span>'
-          + '<span class="fav-dd-name">' + (h.node.name || truncate(pk, 12)) + '</span>'
+          + '<span class="fav-dd-name">' + escapeHtml(h.node.name || truncate(pk, 12)) + '</span>'
           + '<span class="fav-dd-meta">' + (h.stats.lastHeard ? timeAgo(h.stats.lastHeard) : 'never') + '</span>'
           + favStar(pk, 'fav-dd-star')
           + '</a>';
@@ -1907,8 +2010,7 @@ function makeColumnsResizable(tableSelector, storageKey) {
 
   if (!widths) {
     // Measure actual max content width per column by scanning visible rows
-    const tbody = table.querySelector('tbody');
-    const rows = tbody ? Array.from(tbody.querySelectorAll('tr')).slice(0, 30) : [];
+    const rows = measurableRows(table);
 
     // Temporarily set auto layout to measure
     table.style.tableLayout = 'auto';
@@ -2024,4 +2126,311 @@ function makeColumnsResizable(tableSelector, storageKey) {
     th.appendChild(handle);
   });
   } // end addResizeHandles
+}
+
+/**
+ * Body rows that can be measured column by column. Virtual-scroll spacers
+ * and "loading" rows are a single colspan cell; indexing their children by
+ * column puts the spacer's full table width into column 0.
+ */
+function measurableRows(table, limit) {
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return [];
+  return Array.from(tbody.children)
+    .filter(r => !Array.prototype.some.call(r.children, c => c.colSpan > 1))
+    .slice(0, limit || 30);
+}
+
+let _cellMeasureRange = null;
+
+/**
+ * Width a cell needs to show its content on one line, padding included.
+ * Measured from the laid-out content, so it works under table-layout: fixed
+ * without switching the table to auto. Resize handles and the "+N hidden"
+ * pill are absolutely positioned or transient and are left out.
+ */
+function cellContentWidth(cell) {
+  const range = _cellMeasureRange || (_cellMeasureRange = document.createRange());
+  // Span from the leftmost to the rightmost node, so margins between them
+  // (the IATA badge's margin-left) count too.
+  let left = Infinity;
+  let right = -Infinity;
+  for (const n of cell.childNodes) {
+    if (n.nodeType === 1 && n.matches('.col-resize-handle, .col-hidden-pill')) continue;
+    range.selectNode(n);
+    const r = range.getBoundingClientRect();
+    if (!r.width) continue;
+    left = Math.min(left, r.left);
+    right = Math.max(right, r.right);
+  }
+  const w = right > left ? right - left : 0;
+  const cs = getComputedStyle(cell);
+  return Math.ceil(w + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight));
+}
+
+/**
+ * Split `avail` px between content-sized columns and flex columns.
+ *
+ * Each fixed column keeps its content width `w` when there is room. When
+ * there is not, the widest ones are capped at a common level (water-filling)
+ * so the flex columns still get `flexMin` each, but no column goes below its
+ * `floor`. Flex columns share what is left, the rounding remainder going to
+ * the last one. When even the floors leave less than `flexMin`, the flex
+ * columns shrink further, down to `flexHardMin`; below that `total` exceeds
+ * `avail` and the caller's wrapper scrolls. With no flex column (both hidden
+ * by the user), the last fixed column takes the spare width, so the table
+ * still fills `avail`.
+ *
+ * @param {{w: number, floor: number}[]} fixed
+ * @param {number} flexCount
+ * @param {number} avail
+ * @param {number} flexMin
+ * @param {number} [flexHardMin=flexMin]
+ * @returns {{fixed: number[], flex: number[], total: number}}
+ */
+function distributeColumnWidths(fixed, flexCount, avail, flexMin, flexHardMin) {
+  const hardMin = flexHardMin == null ? flexMin : Math.min(flexHardMin, flexMin);
+  const budget = avail - flexCount * flexMin;
+  const sumAt = cap => fixed.reduce((s, c) => s + Math.max(c.floor, Math.min(c.w, cap)), 0);
+  let cap = Infinity;
+  if (sumAt(Infinity) > budget) {
+    // Largest integer cap whose total fits; sumAt is monotonic in cap.
+    let lo = 0;
+    let hi = Math.max(0, ...fixed.map(c => c.w));
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (sumAt(mid) <= budget) lo = mid; else hi = mid - 1;
+    }
+    cap = lo;
+  }
+  const widths = fixed.map(c => Math.max(c.floor, Math.min(c.w, cap)));
+  const fixedSum = widths.reduce((s, w) => s + w, 0);
+  const spare = Math.max(0, avail - fixedSum);
+  const share = flexCount ? Math.max(hardMin, Math.floor(spare / flexCount)) : 0;
+  const flexW = [];
+  for (let i = 0; i < flexCount; i++) flexW.push(share);
+  if (flexCount) flexW[flexCount - 1] += Math.max(0, spare - share * flexCount);
+  else if (widths.length) widths[widths.length - 1] += spare;
+  const total = widths.reduce((s, w) => s + w, 0) + flexW.reduce((s, w) => s + w, 0);
+  return { fixed: widths, flex: flexW, total };
+}
+
+/**
+ * Pixel column sizing for dense tables: every column not listed in
+ * `opts.flex` is sized to its content, and the flex columns split whatever
+ * width the container has left. makeColumnsResizable stores percentages,
+ * which inflate a "17s ago" column to 180px on a wide screen; this keeps
+ * short columns short at every width.
+ *
+ * Every visible column gets an explicit px width and the table gets their
+ * sum as its width. Leaving the flex columns auto would hand a share of the
+ * slack to phantom columns too: a colspan spacer row keeps a slot for each
+ * hidden column, and that slot renders as a blank strip at the right edge.
+ * When the container is too narrow, the widest content-sized columns give
+ * way first (down to `opts.shrinkFloor`, their text ellipsised) so the flex
+ * columns keep `opts.flexMin`; then the flex columns shrink to
+ * `opts.flexHardMin`; past that the wrapper scrolls. A header's CSS
+ * max-width (Scope's 110px) caps its measured width.
+ *
+ * `opts.min` sets floors by column class, for columns whose widest content
+ * may not be on screen at measure time (the expand caret only appears on
+ * grouped rows).
+ *
+ * Content-sized columns have drag handles; dragged widths are saved to
+ * localStorage in px, keyed by column class, and give way under pressure
+ * like measured ones. Double-clicking a handle forgets its width. Flex
+ * columns have no handle: they always share the remaining width.
+ *
+ * Re-measures on its own when the container resizes (the detail panel) and
+ * when the table fires `table-columns-changed` (TableResponsive hiding or
+ * revealing columns). Call refit() after anything else that changes cell
+ * content width: column toggles, name display modes, sorting (the sort
+ * arrow moves to another header). Call grow() after rows render, with the
+ * inserted rows when only some are new.
+ *
+ * @param {string} tableSelector
+ * @param {string} storageKey
+ * @param {{flex: string[], flexMin?: number, flexHardMin?: number, shrinkFloor?: number, min?: Object<string, number>}} opts
+ * @returns {{refit: function(): void, grow: function(Element[]=): void, destroy: function(): void}|null}
+ */
+function fitColumnsToContent(tableSelector, storageKey, opts) {
+  const table = document.querySelector(tableSelector);
+  if (!table) return null;
+  const ths = Array.from(table.querySelectorAll('thead tr:first-child th'));
+  if (ths.length < 2) return null;
+  const wrap = table.parentElement;
+  const flex = new Set(opts.flex);
+  const flexMin = opts.flexMin || 120;
+  const flexHardMin = opts.flexHardMin || 60;
+  const mins = opts.min || {};
+  const shrinkFloor = opts.shrinkFloor || 64;
+  const MIN_DRAG = 28;
+  const colKey = th => Array.from(th.classList).find(c => c.startsWith('col-') && c !== 'col-hidden');
+
+  let dragged = {};
+  try { dragged = JSON.parse(localStorage.getItem(storageKey)) || {}; } catch { dragged = {}; }
+  if (typeof dragged !== 'object' || Array.isArray(dragged)) dragged = {};
+  for (const k of Object.keys(dragged)) {
+    if (flex.has(k) || !Number.isFinite(dragged[k]) || dragged[k] < MIN_DRAG) delete dragged[k];
+  }
+  function saveDragged() {
+    try { localStorage.setItem(storageKey, JSON.stringify(dragged)); } catch { /* quota / private mode */ }
+  }
+
+  table.style.tableLayout = 'fixed';
+
+  // Content widths of the visible fixed columns, from the last measure().
+  let natural = new Map();
+  let borderPx = 0;
+
+  // Content widths per visible fixed column over `rows` (default: every
+  // rendered row; virtual scroll already bounds how many exist).
+  function measure(rows) {
+    rows = (rows || measurableRows(table, Infinity))
+      .filter(r => !Array.prototype.some.call(r.children, c => c.colSpan > 1));
+    const next = new Map();
+    ths.forEach((th, i) => {
+      const key = colKey(th);
+      if (th.offsetParent === null || dragged[key] || flex.has(key)) return;
+      let w = Math.max(mins[key] || 0, cellContentWidth(th));
+      rows.forEach(r => { if (r.children[i]) w = Math.max(w, cellContentWidth(r.children[i])); });
+      const maxW = parseFloat(getComputedStyle(th).maxWidth);
+      if (Number.isFinite(maxW)) w = Math.min(w, maxW);
+      next.set(th, w);
+    });
+    return next;
+  }
+
+  function layout() {
+    const fixedThs = [];
+    const fixedCols = [];
+    const flexThs = [];
+    // The last visible column absorbs the slack when no flex column is
+    // shown; `fit-last` hides its drag handle, which overhangs the table's
+    // right edge by a few px and would give the wrapper a scrollbar.
+    const visible = ths.filter(th => th.offsetParent !== null);
+    ths.forEach(th => th.classList.toggle('fit-last', th === visible[visible.length - 1]));
+    ths.forEach(th => {
+      if (th.offsetParent === null) return;
+      const key = colKey(th);
+      const w = dragged[key] || natural.get(th);
+      if (flex.has(key)) flexThs.push(th);
+      else if (w) {
+        fixedThs.push(th);
+        fixedCols.push({ w, floor: Math.min(w, Math.max(mins[key] || 0, shrinkFloor)) });
+      } else th.style.width = '';
+    });
+    const apply = () => {
+      const d = distributeColumnWidths(fixedCols, flexThs.length, wrap.clientWidth - borderPx, flexMin, flexHardMin);
+      fixedThs.forEach((th, i) => { th.style.width = d.fixed[i] + 'px'; });
+      flexThs.forEach((th, i) => { th.style.width = d.flex[i] + 'px'; });
+      table.style.width = d.total + 'px';
+      return d.total;
+    };
+    // Collapsed borders (the row's coloured left edge) render a few px
+    // beyond the column sum. Learn how many on the first pass and lay out
+    // again without them, so a table that should fit grows no scrollbar.
+    // Bounded: anything bigger is not a border and must not eat the width.
+    const total = apply();
+    const extra = Math.min(8, Math.max(0, table.offsetWidth - total));
+    if (extra !== borderPx) { borderPx = extra; apply(); }
+  }
+
+  function refit() {
+    if (!table.isConnected) return;
+    natural = measure();
+    layout();
+  }
+
+  // After new rows render: widen any column whose content outgrew it (rows
+  // age from "9m ago" to "10m ago", scrolling brings longer names), but never
+  // narrow one, so columns do not jitter as rows scroll past. Pass just the
+  // rows that were inserted when the others are unchanged (virtual-scroll
+  // steps): measuring is ~10 rects per cell.
+  function grow(rows) {
+    if (!table.isConnected) return;
+    if (rows && !rows.length) return;
+    let changed = false;
+    measure(rows).forEach((w, th) => {
+      if (w > (natural.get(th) || 0)) { natural.set(th, w); changed = true; }
+    });
+    if (changed) layout();
+  }
+
+  // Its own flag: `resizable` is makeColumnsResizable's already-wired guard.
+  if (!table.dataset.fitColumns) {
+    table.dataset.fitColumns = '1';
+    ths.forEach(th => {
+      const key = colKey(th);
+      if (flex.has(key)) return;
+      const handle = document.createElement('div');
+      handle.className = 'col-resize-handle';
+      handle.title = 'Drag to resize, double-click to fit the content';
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startW = th.offsetWidth;
+        handle.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        function onMove(e2) {
+          // Re-lay out on every move so the flex columns give the width
+          // back: setting only this <th> lets fixed layout spread the
+          // difference over every column, and the edge lags the pointer.
+          dragged[key] = Math.max(MIN_DRAG, startW + e2.clientX - startX);
+          layout();
+        }
+        function onUp() {
+          handle.classList.remove('active');
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          if (dragged[key]) saveDragged();
+          refit();
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      handle.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        delete dragged[key];
+        saveDragged();
+        refit();
+      });
+      // A handle click must not reach the header's sort handler.
+      handle.addEventListener('click', (e) => e.stopPropagation());
+      th.appendChild(handle);
+    });
+  }
+
+  // The container changes width when the detail panel opens or is dragged:
+  // redistribute only. Responsive hiding changes which columns exist.
+  // Coalesced to one layout per frame: dragging the detail-panel divider
+  // resizes the wrapper on every pointer move, and layout() forces a
+  // synchronous reflow.
+  let lastWrapW = wrap.clientWidth;
+  let layoutRaf = 0;
+  const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => {
+    if (layoutRaf) return;
+    layoutRaf = requestAnimationFrame(() => {
+      layoutRaf = 0;
+      if (!table.isConnected || wrap.clientWidth === lastWrapW) return;
+      lastWrapW = wrap.clientWidth;
+      layout();
+    });
+  }) : null;
+  if (ro) ro.observe(wrap);
+  table.addEventListener('table-columns-changed', refit);
+
+  function destroy() {
+    if (ro) ro.disconnect();
+    if (layoutRaf) cancelAnimationFrame(layoutRaf);
+    table.removeEventListener('table-columns-changed', refit);
+  }
+
+  refit();
+  return { refit, grow, destroy };
 }

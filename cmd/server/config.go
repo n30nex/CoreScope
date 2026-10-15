@@ -37,10 +37,12 @@ type ListLimitsConfig struct {
 
 // Config mirrors the Node.js config.json structure (read-only fields).
 type Config struct {
-	Port       int               `json:"port"`
-	APIKey     string            `json:"apiKey"`
-	DBPath     string            `json:"dbPath"`
-	ListLimits *ListLimitsConfig `json:"listLimits"`
+	Port        int               `json:"port"`
+	APIKey      string            `json:"apiKey"`
+	DBPath      string            `json:"dbPath,omitempty"` // legacy SQLite path; an installed selection is authoritative
+	DatabaseURL string            `json:"databaseURL"`
+	StateDir    string            `json:"stateDir"`
+	ListLimits  *ListLimitsConfig `json:"listLimits"`
 
 	// NodeBlacklist is a list of public keys to exclude from all API responses.
 	// Blacklisted nodes are hidden from node lists, search, detail, map, and stats.
@@ -147,6 +149,10 @@ type Config struct {
 	// so browsers enforce same-origin policy. Set to ["*"] to allow all origins.
 	CORSAllowedOrigins []string `json:"corsAllowedOrigins,omitempty"`
 
+	// WebSocket carries the /ws transport limits from #1794. Omitted entirely
+	// means: rate limit at its default, connection cap off, no deny list.
+	WebSocket *WebSocketConfig `json:"webSocket,omitempty"`
+
 	DebugAffinity bool `json:"debugAffinity,omitempty"`
 
 	// MapDarkTileProvider selects the default dark-mode basemap provider for
@@ -168,6 +174,25 @@ type Config struct {
 	// (corescope-rx companions publishing GPS-tagged receptions). Absent/nil
 	// ⇒ off; see ClientRxCoverageEnabled.
 	ClientRxCoverage *ClientRxCoverageConfig `json:"clientRxCoverage,omitempty"`
+
+	// ClientRfSamples gates the opt-in RF environment sample stream (companion
+	// radio noise-floor/counters paired with GPS, table client_rf_samples).
+	// This is the same flag cmd/ingestor checks before recording samples;
+	// mirrored here so the server can gate reading them back. Absent/nil ⇒
+	// off; see ClientRfSamplesEnabled.
+	ClientRfSamples *ClientRfSamplesConfig `json:"clientRfSamples,omitempty"`
+
+	// UserManagement gates optional accounts
+	// (docs/specs/2026-10-06-user-management-design.md). Absent/nil means off;
+	// see UserManagementEnabled.
+	UserManagement *UserManagementConfig `json:"userManagement,omitempty"`
+
+	// HashChannels and ChannelKeys are the ingestor's channel configuration,
+	// read here for the names only: a channel proposal for a configured name
+	// is refused (see configuredChannelNames). ChannelKeys drops the key
+	// values while unmarshalling, so the server never holds key material.
+	HashChannels []string        `json:"hashChannels,omitempty"`
+	ChannelKeys  channelKeyNames `json:"channelKeys,omitempty"`
 
 	ResolvedPath  *ResolvedPathConfig  `json:"resolvedPath,omitempty"`
 	NeighborGraph *NeighborGraphConfig `json:"neighborGraph,omitempty"`
@@ -269,6 +294,20 @@ func (c *Config) ClientRxCoverageEnabled() bool {
 	return c != nil && c.ClientRxCoverage != nil && c.ClientRxCoverage.Enabled
 }
 
+// ClientRfSamplesConfig gates the opt-in RF environment sample stream.
+// Mirrors cmd/ingestor's ClientRfSamplesConfig (same JSON section, read by
+// both binaries from the same config.json).
+type ClientRfSamplesConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
+// ClientRfSamplesEnabled reports whether the opt-in RF environment sample
+// stream is on. Nil config or absent/nil section ⇒ off (the safe default),
+// mirroring ClientRxCoverageEnabled.
+func (c *Config) ClientRfSamplesEnabled() bool {
+	return c != nil && c.ClientRfSamples != nil && c.ClientRfSamples.Enabled
+}
+
 // WSCompressionEnabled returns true when WebSocket permessage-deflate is explicitly enabled.
 func (c *Config) WSCompressionEnabled() bool {
 	return c.Compression != nil && c.Compression.Websocket
@@ -332,7 +371,7 @@ type RetentionConfig struct {
 	MetricsDays  int `json:"metricsDays"`
 }
 
-// DBConfig is the shared SQLite vacuum/maintenance config (#919, #921).
+// DBConfig shares startup-load settings and accepts obsolete SQLite config keys.
 type DBConfig = dbconfig.DBConfig
 
 // IncrementalVacuumPages returns the configured pages per vacuum or 1024 default.
@@ -456,10 +495,13 @@ func LoadConfig(baseDirs ...string) (*Config, error) {
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
-			continue
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("cannot read %s; refusing configuration fallback", filepath.Base(p))
 		}
 		if err := json.Unmarshal(data, cfg); err != nil {
-			continue
+			return nil, fmt.Errorf("%s is malformed or has invalid field types; refusing configuration fallback", filepath.Base(p))
 		}
 		cfg.NormalizeTimestampConfig()
 		cfg.migrateDeprecatedConfig()
@@ -472,6 +514,81 @@ func LoadConfig(baseDirs ...string) (*Config, error) {
 	cfg.applyListLimitsDefaults()
 	applyCORSEnv(cfg)
 	return cfg, nil // defaults
+}
+
+// WebSocketConfig holds the /ws transport limits (#1794). These sit behind
+// the CheckOrigin allowlist (#1793) and catch non-browser clients, which can
+// omit or forge Origin.
+type WebSocketConfig struct {
+	// MaxConnsPerIP caps concurrent /ws connections from one client address.
+	// DEFAULT 0, meaning OFF, and that is a deliberate departure from the
+	// value floated on #1794.
+	//
+	// A cap of 5 is safe only when one address means one household. It does
+	// not on mobile: carrier-grade NAT puts thousands of unrelated subscribers
+	// behind a single public IPv4, so a low cap would refuse real visitors on
+	// phones while barely inconveniencing a scraper that can rent more
+	// addresses. Operators who know their audience can set it; we must not
+	// pick it for them.
+	MaxConnsPerIP int `json:"maxConnsPerIP,omitempty"`
+
+	// UpgradesPerMinPerIP caps handshakes per minute from one client address.
+	// DEFAULT 30, on. Unlike the connection cap this is safe under CGNAT: a
+	// real client upgrades a handful of times per minute even while
+	// reconnecting, so 30 leaves ordinary traffic untouched while flattening
+	// the reconnect loop that makes scrapers expensive.
+	UpgradesPerMinPerIP *int `json:"upgradesPerMinPerIP,omitempty"`
+
+	// TrustedProxies lists the addresses or CIDRs of reverse proxies whose
+	// X-Forwarded-For may be believed. REQUIRED for the limits to do anything
+	// behind nginx/Caddy/Traefik/ingress: without it every visitor shares the
+	// proxy's address, so the limits are skipped and a warning is logged.
+	// Never list an address you do not control; anyone reaching the server
+	// from a trusted address can name any client IP they like.
+	TrustedProxies []string `json:"trustedProxies,omitempty"`
+
+	// Deny blocks addresses outright at the upgrade, before the handshake.
+	// Accepts both bare addresses ("1.2.3.4") and CIDRs ("1.2.3.0/24").
+	// Applies even when clients cannot be told apart, because it is an
+	// explicit instruction rather than an inference.
+	Deny []string `json:"deny,omitempty"`
+}
+
+// WSMaxConnsPerIP returns the configured concurrent-connection cap, 0 = off.
+func (c *Config) WSMaxConnsPerIP() int {
+	if c.WebSocket == nil || c.WebSocket.MaxConnsPerIP < 0 {
+		return 0
+	}
+	return c.WebSocket.MaxConnsPerIP
+}
+
+// WSUpgradesPerMinPerIP returns the upgrade-rate cap, defaulting to 30 when
+// unset. A pointer distinguishes "not configured" (use the default) from an
+// explicit 0, which an operator uses to turn the limit off.
+func (c *Config) WSUpgradesPerMinPerIP() int {
+	if c.WebSocket == nil || c.WebSocket.UpgradesPerMinPerIP == nil {
+		return 30
+	}
+	if v := *c.WebSocket.UpgradesPerMinPerIP; v > 0 {
+		return v
+	}
+	return 0
+}
+
+// WSTrustedProxies returns the configured reverse-proxy addresses, if any.
+func (c *Config) WSTrustedProxies() []string {
+	if c.WebSocket == nil {
+		return nil
+	}
+	return c.WebSocket.TrustedProxies
+}
+
+// WSDeny returns the configured deny entries, if any.
+func (c *Config) WSDeny() []string {
+	if c.WebSocket == nil {
+		return nil
+	}
+	return c.WebSocket.Deny
 }
 
 func (c *Config) applyListLimitsDefaults() {
@@ -623,14 +740,27 @@ func (h HealthThresholds) ToClientMs() map[string]int {
 	}
 }
 
-func (c *Config) ResolveDBPath(baseDir string) string {
-	if c.DBPath != "" {
-		return c.DBPath
+// ResolveDatabaseURL refuses legacy paths rather than interpreting them as DSNs.
+func (c *Config) ResolveDatabaseURL() (string, error) {
+	if c.DBPath != "" || os.Getenv("DB_PATH") != "" {
+		return "", fmt.Errorf("dbPath and DB_PATH are no longer supported; import the SQLite database and configure databaseURL or CORESCOPE_DATABASE_URL")
 	}
-	if v := os.Getenv("DB_PATH"); v != "" {
+	v := envOrValue(os.Getenv, "CORESCOPE_READER_DATABASE_URL", envOrValue(os.Getenv, "CORESCOPE_DATABASE_URL", c.DatabaseURL))
+	if v == "" {
+		return "", fmt.Errorf("configure databaseURL or CORESCOPE_DATABASE_URL for the PostgreSQL telemetry reader")
+	}
+	return v, nil
+}
+
+func (c *Config) ResolveStateDir(baseDir string) string {
+	v := envOrValue(os.Getenv, "CORESCOPE_STATE_DIR", c.StateDir)
+	if v == "" {
+		v = "data"
+	}
+	if filepath.IsAbs(v) {
 		return v
 	}
-	return filepath.Join(baseDir, "data", "meshcore.db")
+	return filepath.Join(baseDir, v)
 }
 
 func (c *Config) NormalizeTimestampConfig() {
@@ -891,9 +1021,15 @@ func SaveGeoFilter(configDir string, gf *GeoFilterConfig) error {
 	}
 	out = append(out, '\n')
 
-	// Atomic write: temp file + rename.
+	// Atomic write: temp file + rename. Keep the original file's mode:
+	// config.json holds the API key and broker passwords, and an operator
+	// who made it 0600 should not find it 0644 after a geo-filter save.
+	mode := os.FileMode(0644)
+	if fi, err := os.Stat(configPath); err == nil {
+		mode = fi.Mode().Perm()
+	}
 	tmp := configPath + ".tmp"
-	if err := os.WriteFile(tmp, out, 0644); err != nil {
+	if err := os.WriteFile(tmp, out, mode); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	if err := os.Rename(tmp, configPath); err != nil {
@@ -995,4 +1131,55 @@ func (c *Config) AnalyticsRecomputeIntervals() AnalyticsRecomputeIntervals {
 	out.ObserversClockSkew = get("observersClockSkew")
 	out.NodesClockSkew = get("nodesClockSkew")
 	return out
+}
+
+// channelKeyNames is config.json channelKeys ({name: hexKey}) reduced to the
+// names; the key values are discarded during unmarshalling. A value that is
+// not an object is ignored with a log line instead of failing: LoadConfig
+// falls back to pure defaults on any parse error, and this field must not
+// change config loading for deployments without channel proposals.
+type channelKeyNames []string
+
+func (n *channelKeyNames) UnmarshalJSON(b []byte) error {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		log.Printf("[config] channelKeys is not an object; ignoring it for channel-proposal checks")
+		*n = nil
+		return nil
+	}
+	names := make(channelKeyNames, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	*n = names
+	return nil
+}
+
+// configuredChannelNames is the set of channel names the ingestor already
+// decrypts from config.json, normalised as cmd/ingestor's loadChannelKeys
+// does: hashChannels trimmed and prefixed with '#', channelKeys names as
+// written except the well-known casing fix (public becomes Public).
+// Case-sensitive, like the ingestor's key map.
+func (c *Config) configuredChannelNames() map[string]bool {
+	names := map[string]bool{}
+	if c == nil {
+		return names
+	}
+	for _, raw := range c.HashChannels {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if !strings.HasPrefix(name, "#") {
+			name = "#" + name
+		}
+		names[name] = true
+	}
+	for _, name := range c.ChannelKeys {
+		if strings.EqualFold(name, "public") {
+			name = "Public"
+		}
+		names[name] = true
+	}
+	return names
 }

@@ -1,0 +1,300 @@
+#!/usr/bin/env node
+/* Path Inspector — real fixture API, map route drawing/replacement, side pane,
+ * legacy trace redirect and tools landing. Seed test-fixtures/path-inspector.sql
+ * after migrating the fixture and BEFORE starting the server (see #2060).
+ * Missing candidates are failures, never skips or mocked responses.
+ */
+'use strict';
+
+const assert = require('node:assert/strict');
+const { chromium } = require('playwright');
+
+const BASE = process.env.BASE_URL || 'http://localhost:13581';
+// Three-byte prefixes meet the default path-trust policy. The middle prefix
+// deliberately matches two repeaters, giving two distinct routes to draw.
+const PREFIXES = 'f20601,f20602,f20603';
+const key = (prefix, suffix = '0') => prefix + suffix.repeat(64 - prefix.length);
+const POSITIONS = {
+  [key('f20601')]: [1, 1],
+  [key('f20602', '1')]: [1.01, 1.01],
+  [key('f20602', '2')]: [0.99, 1.01],
+  [key('f20603')]: [1, 1.02],
+};
+
+let passes = 0, failures = 0;
+function pass(msg) { console.log(`  ✓ ${msg}`); passes++; }
+function fail(msg) { console.error(`  ✗ ${msg}`); failures++; }
+
+// The toggle ships in the page template, but its click handler is attached by
+// initMapSidePane(), which public/map.js calls at the END of loadNodes()
+// (map.js:1795). So the button exists for seconds before it does anything, and
+// a single click on sight is a race that silently no-ops. Measured at ~3s
+// against a populated instance.
+//
+// Clicking for real each attempt rather than dispatching in-page on purpose: a
+// click that cannot land (an overlay eating it, as in #2049) has to fail here,
+// which an element.click() from evaluate would hide.
+async function expandPane(page) {
+  await page.waitForSelector('#mapPaneToggle', { timeout: 15000 });
+  for (let i = 0; i < 20; i++) {
+    const expanded = await page.evaluate(() => {
+      const el = document.getElementById('mapSidePane');
+      return !!el && /\bexpanded\b/.test(el.className);
+    });
+    if (expanded) return;
+    try {
+      await page.click('#mapPaneToggle', { timeout: 1500 });
+    } catch { /* not clickable yet; the next round re-checks */ }
+    await page.waitForTimeout(500);
+  }
+  throw new Error('the pane never expanded after 20 clicks over ~20s');
+}
+
+async function openPaneAndSubmit(page) {
+  await page.goto(`${BASE}/#/map`, { waitUntil: 'domcontentloaded' });
+  await expandPane(page);
+  await page.fill('#mapPiInput', PREFIXES);
+  await page.click('#mapPiSubmit');
+  await page.waitForSelector('#mapPiResults button[data-idx="1"]', { timeout: 10000 });
+}
+
+async function assertDesktopLayout(page) {
+  const layout = await page.evaluate(() => ({
+    sidebar: document.querySelector('.mc-rt-sidebar').getBoundingClientRect().toJSON(),
+    map: document.querySelector('#leaflet-map').getBoundingClientRect().toJSON(),
+    inspector: document.querySelector('#mapSidePane').getBoundingClientRect().toJSON(),
+    viewport: innerWidth,
+  }));
+  assert.equal(layout.sidebar.left, 0, 'route sidebar stays on the left');
+  assert.ok(layout.sidebar.right <= layout.map.left + 1, 'map must reserve the route sidebar width');
+  assert.ok(layout.map.right <= layout.inspector.left + 1, 'map must not cover the Path Inspector');
+  assert.ok(layout.map.width >= 160, 'map retains at least 160px of usable space');
+  assert.ok(layout.inspector.right <= layout.viewport + 1, 'inspector stays within the viewport');
+}
+
+async function resizeSidebar(page, width) {
+  const current = await page.locator('.mc-rt-sidebar').boundingBox();
+  const handle = await page.locator('.mc-rt-resize-handle').boundingBox();
+  // The collapse button overlaps the handle's midpoint; drag its upper half.
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 4);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2 + width - current.width, handle.y + handle.height / 4, { steps: 4 });
+  await page.mouse.up();
+}
+
+async function main() {
+  const requireChromium = process.env.CHROMIUM_REQUIRE === '1';
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined });
+  } catch (err) {
+    if (requireChromium) {
+      console.error(`HARD FAIL — Chromium unavailable: ${err.message}`);
+      process.exit(1);
+    }
+    console.warn(`SKIP — Chromium unavailable: ${err.message}`);
+    process.exit(0);
+  }
+
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await ctx.newPage();
+
+  // (1) The side pane exists and starts collapsed.
+  await page.goto(`${BASE}/#/map`, { waitUntil: 'domcontentloaded' });
+  try {
+    await page.waitForSelector('#mapSidePane', { timeout: 15000 });
+    const cls = await page.getAttribute('#mapSidePane', 'class');
+    if (cls && /\bexpanded\b/.test(cls)) fail(`(1) the side pane starts expanded (class="${cls}")`);
+    else pass('(1) the side pane is present and collapsed by default');
+  } catch {
+    fail('(1) #mapSidePane never appeared within 15s');
+  }
+
+  // (2) The toggle expands it.
+  try {
+    await expandPane(page);
+    pass('(2) clicking the toggle expands the pane');
+  } catch {
+    const cls = await page.getAttribute('#mapSidePane', 'class').catch(() => '(missing)');
+    fail(`(2) the pane did not gain .expanded (class="${cls}")`);
+  }
+
+  // (3) Real API candidates must resolve to both seeded routes. An HTTP 200
+  // with an empty result used to count as coverage for this round trip.
+  try {
+    const response = await page.request.post(BASE + '/api/paths/inspect', {
+      data: { prefixes: PREFIXES.split(',') },
+    });
+    assert.equal(response.status(), 200, 'fixture inspector API must be ready');
+    const data = await response.json();
+    assert.equal(data.candidates.length, 2, 'fixture must return two distinct candidates; apply path-inspector.sql before server startup');
+    assert.deepEqual(data.candidates.map(candidate => candidate.path.join(',')).sort(), [
+      [key('f20601'), key('f20602', '1'), key('f20603')].join(','),
+      [key('f20601'), key('f20602', '2'), key('f20603')].join(','),
+    ].sort(), 'both complete fixture routes must be returned, regardless of score order');
+    for (const candidate of data.candidates) {
+      assert.equal(candidate.path.length, 3);
+      assert.equal(candidate.speculative, false, 'seeded graph must support both normal routes');
+      candidate.path.forEach(pk => assert.ok(POSITIONS[pk], 'candidate must use a seeded GPS repeater'));
+      assert.equal(candidate.evidence.perHop.length, 3);
+      assert.ok(candidate.evidence.perHop.every(hop => hop.trusted), 'three-byte hops must satisfy the unchanged trust policy');
+    }
+    await openPaneAndSubmit(page);
+    assert.equal(await page.locator('#mapPiResults button[data-idx]').count(), 2);
+    pass('(3) submitting prefixes renders both real, trusted fixture candidates');
+
+    // (4) Check actual Leaflet polylines, their coordinates and rendered SVG.
+    // No forced clicks: overlays blocking either candidate must fail the test.
+    for (let index = 0; index < 2; index++) {
+      const path = data.candidates[index].path.map(pk => POSITIONS[pk]);
+      const expected = [path.slice(0, 2), path.slice(1, 3)];
+      if (index === 1) {
+        const receivesClick = await page.locator('#mapPiResults button[data-idx="1"]').evaluate(button => {
+          const rect = button.getBoundingClientRect();
+          return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+        });
+        assert.ok(receivesClick, '#2081: the rendered map must not intercept the second candidate button');
+      }
+      await page.locator(`#mapPiResults button[data-idx="${index}"]`).click();
+      await page.waitForFunction(expected => {
+        const group = window.__mc_routeLayer;
+        if (!group) return false;
+        const lines = group.getLayers().filter(layer => layer instanceof L.Polyline && !(layer instanceof L.Polygon));
+        const mapRect = window.__mc_map.getContainer().getBoundingClientRect();
+        const visible = line => {
+          const element = line.getElement();
+          if (!element || !element.getAttribute('d')) return false;
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility === 'visible' && Number(style.opacity) > 0 &&
+            rect.width > 0 && rect.height > 0 && rect.right > mapRect.left && rect.left < mapRect.right &&
+            rect.bottom > mapRect.top && rect.top < mapRect.bottom;
+        };
+        return lines.length === 2 && expected.every(points => lines.some(line =>
+          JSON.stringify(line.getLatLngs().map(p => [p.lat, p.lng])) === JSON.stringify(points) &&
+          window.__mc_map.hasLayer(line) && visible(line)
+        ));
+      }, expected, { timeout: 10000 });
+      if (index === 0) {
+        await page.evaluate(() => { window.__previousInspectorLayers = window.__mc_routeLayer.getLayers(); });
+        pass('(4) Show on Map draws both segments at the first candidate coordinates');
+      } else {
+        const previousRemoved = await page.evaluate(() => window.__previousInspectorLayers.every(layer =>
+          !window.__mc_routeLayer.hasLayer(layer) && !window.__mc_map.hasLayer(layer)
+        ));
+        assert.ok(previousRemoved, 'switching candidates must remove every prior route layer from the map');
+        pass('(5) switching candidates draws the other route and removes all prior route objects');
+      }
+    }
+    await assertDesktopLayout(page);
+
+    // The desktop layout repair must preserve the mobile fixed bottom sheet.
+    await page.setViewportSize({ width: 375, height: 812 });
+    const mobile = await page.locator('.mc-rt-sidebar').evaluate(sidebar => ({
+      position: getComputedStyle(sidebar).position,
+      rect: sidebar.getBoundingClientRect().toJSON(),
+      map: document.querySelector('#leaflet-map').getBoundingClientRect().toJSON(),
+    }));
+    assert.equal(mobile.position, 'fixed');
+    assert.equal(mobile.rect.left, 0);
+    assert.equal(mobile.rect.width, 375);
+    assert.equal(mobile.map.left, 0);
+    assert.equal(mobile.map.width, 375);
+    assert.ok(mobile.rect.bottom <= 812 && mobile.rect.top > 600, 'mobile route details remain a bottom sheet');
+    await page.locator('.mc-rt-mobile-handle').click();
+    assert.equal(await page.locator('.mc-rt-mobile-handle').getAttribute('aria-expanded'), 'true');
+    await page.waitForFunction(() => document.querySelector('.mc-rt-sidebar').getBoundingClientRect().height >= innerHeight * 0.75 - 1);
+    const expanded = await page.locator('.mc-rt-sidebar').evaluate(sidebar => ({
+      rect: sidebar.getBoundingClientRect().toJSON(),
+      map: document.querySelector('#leaflet-map').getBoundingClientRect().toJSON(),
+    }));
+    assert.equal(expanded.rect.left, 0);
+    assert.equal(expanded.rect.width, 375);
+    assert.ok(Math.abs(expanded.rect.bottom - mobile.rect.bottom) < 1, 'expanded sheet keeps its bottom anchor');
+    assert.ok(expanded.map.height > 0 && expanded.map.height < mobile.map.height, 'expanded sheet leaves a smaller usable map');
+    assert.ok(expanded.map.bottom <= expanded.rect.top + 1, 'map ends above the expanded sheet');
+    await page.locator('.mc-rt-mobile-handle').click();
+    assert.equal(await page.locator('.mc-rt-mobile-handle').getAttribute('aria-expanded'), 'false');
+    await page.waitForFunction(initial => {
+      const sidebar = document.querySelector('.mc-rt-sidebar').getBoundingClientRect();
+      const map = document.querySelector('#leaflet-map').getBoundingClientRect();
+      return Math.abs(sidebar.height - initial.rect.height) < 1 && Math.abs(sidebar.top - initial.rect.top) < 1 &&
+        Math.abs(map.height - initial.map.height) < 1 && Math.abs(map.bottom - initial.map.bottom) < 1;
+    }, mobile);
+    pass('(6) mobile sheet expansion reserves map space and collapse restores both geometries');
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.locator('.mc-rt-collapse-btn').click();
+    await assertDesktopLayout(page);
+    assert.equal(await page.locator('.mc-rt-sidebar').evaluate(el => el.getBoundingClientRect().width), 36);
+    await page.locator('.mc-rt-collapse-btn').click();
+    await assertDesktopLayout(page);
+    pass('(7) collapsing and restoring the route sidebar keeps both map and inspector accessible');
+
+    await resizeSidebar(page, 400);
+    assert.equal(await page.locator('.mc-rt-sidebar').evaluate(el => el.getBoundingClientRect().width), 400);
+    await assertDesktopLayout(page);
+    pass('(8) dragging the route sidebar to 400px preserves space for the inspector');
+    await resizeSidebar(page, 700);
+    assert.equal(await page.evaluate(() => localStorage.getItem('mc-rt-sidebar-width')), '700');
+    for (const width of [900, 768]) {
+      await page.setViewportSize({ width, height: 900 });
+      await assertDesktopLayout(page);
+      await page.locator('.mc-rt-collapse-btn').click();
+      await assertDesktopLayout(page);
+      assert.equal(await page.locator('.mc-rt-sidebar').evaluate(el => el.getBoundingClientRect().width), 36);
+      await page.locator('.mc-rt-collapse-btn').click();
+      await assertDesktopLayout(page);
+    }
+    // A saved desktop preference must be constrained on a new narrow page too.
+    // The previous route's sidebar survives the hash-only goto to #/map, and
+    // the new one replaces it only after /api/resolve-hops answers. Waiting
+    // for any .mc-rt-sidebar matched the old one, so the checks below could
+    // measure it, or measure it just after its removal: a detached element
+    // has a 0px rect, which is how this failed intermittently in CI.
+    await openPaneAndSubmit(page);
+    await page.evaluate(() => { window.__previousRouteSidebar = document.querySelector('.mc-rt-sidebar'); });
+    await page.locator('#mapPiResults button[data-idx="0"]').click();
+    await page.waitForFunction(() => {
+      const sidebar = document.querySelector('.mc-rt-sidebar');
+      return !!sidebar && sidebar !== window.__previousRouteSidebar;
+    }, null, { timeout: 10000 });
+    assert.equal(await page.locator('.mc-rt-sidebar').evaluate(el => el.style.width), '700px');
+    await assertDesktopLayout(page);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    assert.equal(await page.locator('.mc-rt-sidebar').evaluate(el => el.getBoundingClientRect().width), 700);
+    await assertDesktopLayout(page);
+    pass('(9) dragged and saved 700px widths adapt at 900/768px and restore on a wider viewport');
+  } catch (err) {
+    fail('(3-9) fixture route coverage: ' + err.message);
+  }
+
+  // (10) The legacy trace URL still redirects.
+  await page.goto(`${BASE}/#/traces/abc123`, { waitUntil: 'domcontentloaded' });
+  try {
+    await page.waitForFunction(() => location.hash.indexOf('#/tools/trace/abc123') === 0, null, { timeout: 5000 });
+    pass('(10) /#/traces/<hash> redirects to /#/tools/trace/<hash>');
+  } catch {
+    fail(`(10) no redirect; the URL is ${JSON.stringify(page.url())}`);
+  }
+
+  // (11) The tools landing lists both tools.
+  await page.goto(`${BASE}/#/tools`, { waitUntil: 'domcontentloaded' });
+  try {
+    await page.waitForSelector('.tools-landing', { timeout: 8000 });
+    const links = await page.evaluate(() => ({
+      pi: !!document.querySelector('a[href="#/tools/path-inspector"]'),
+      trace: !!document.querySelector('a[href*="#/tools/trace"]'),
+    }));
+    if (links.pi && links.trace) pass('(11) the tools landing links to both tools');
+    else fail(`(11) the tools landing is missing a link (path-inspector: ${links.pi}, trace: ${links.trace})`);
+  } catch {
+    fail('(11) .tools-landing never rendered within 8s');
+  }
+
+  await browser.close();
+  console.log(`\ntest-path-inspector-e2e: ${passes} passed, ${failures} failed`);
+  process.exit(failures ? 1 : 0);
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });

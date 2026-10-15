@@ -13,7 +13,7 @@ import (
 
 // TestHandleNodePaths_AnchorBiasInconsistency_Issue1278 reproduces #1278:
 // /api/nodes/{pk}/paths returns a tx whose CANONICAL persisted resolved_path
-// (the one the packets page reads via fetchResolvedPathForTxBest) does NOT
+// (the one the packets page reads via bestResolvedPath) does NOT
 // contain the queried pubkey.
 //
 // Two nodes share the 1-byte prefix "c0":
@@ -43,31 +43,31 @@ func TestHandleNodePaths_AnchorBiasInconsistency_Issue1278(t *testing.T) {
 	nodeGPSPK := "c0ffeec700000000000000000000000000000000000000000000000000000001"
 
 	if _, err := db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
-		VALUES (?, 'NodeNoGPS', 'repeater', 0, 0, ?, '2026-01-01', 1)`, nodeNoGPSPK, recent); err != nil {
+		VALUES ($1, 'NodeNoGPS', 'repeater', 0, 0, $2, '2026-01-01', 1)`, nodeNoGPSPK, recent); err != nil {
 		t.Fatalf("insert nodeNoGPS: %v", err)
 	}
 	if _, err := db.conn.Exec(`INSERT INTO nodes (public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
-		VALUES (?, 'NodeGPS', 'repeater', 37.5, -122.0, ?, '2026-01-01', 1)`, nodeGPSPK, recent); err != nil {
+		VALUES ($1, 'NodeGPS', 'repeater', 37.5, -122.0, $2, '2026-01-01', 1)`, nodeGPSPK, recent); err != nil {
 		t.Fatalf("insert nodeGPS: %v", err)
 	}
 
 	if _, err := db.conn.Exec(`INSERT INTO transmissions (id, raw_hex, hash, first_seen)
-		VALUES (100, 'AA', 'hash_collision', ?)`, recent); err != nil {
+		VALUES (100, 'AA', 'hash_collision', $1)`, recent); err != nil {
 		t.Fatalf("insert tx: %v", err)
 	}
 	// obs1: SHORTER path_json (single hop), resolved → nodeNoGPS.
 	// (Without this row, the membership index wouldn't list nodeNoGPS at all
 	// and the tx would be cleanly excluded — the bug needs the index hit.)
 	if _, err := db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, path_json, timestamp, resolved_path)
-		VALUES (100, NULL, '["c0"]', ?, ?)`, recentEpoch, `["`+nodeNoGPSPK+`"]`); err != nil {
+		VALUES (100, NULL, '["c0"]', $1, $2)`, recentEpoch, `["`+nodeNoGPSPK+`"]`); err != nil {
 		t.Fatalf("insert obs1: %v", err)
 	}
 	// obs2: LONGER path_json (two hops, first hop is what packets page shows
-	// as resolved_path[0]). fetchResolvedPathForTxBest picks this obs as
+	// as resolved_path[0]). bestResolvedPath picks this obs as
 	// canonical because it has the longer path_json. Its resolved_path
 	// picks nodeGPS for "c0", NOT nodeNoGPS.
 	if _, err := db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, path_json, timestamp, resolved_path)
-		VALUES (100, NULL, '["c0","ee"]', ?, ?)`, recentEpoch, `["`+nodeGPSPK+`","ee00000000000000000000000000000000000000000000000000000000000000"]`); err != nil {
+		VALUES (100, NULL, '["c0","ee"]', $1, $2)`, recentEpoch, `["`+nodeGPSPK+`","ee00000000000000000000000000000000000000000000000000000000000000"]`); err != nil {
 		t.Fatalf("insert obs2: %v", err)
 	}
 
@@ -78,17 +78,8 @@ func TestHandleNodePaths_AnchorBiasInconsistency_Issue1278(t *testing.T) {
 	if err := store.Load(); err != nil {
 		t.Fatalf("store.Load: %v", err)
 	}
-	// The path-hop index that /paths reads is built in a background goroutine
-	// (#1008); querying before it is ready races the build and yields a
-	// non-deterministic membership/canonical result (the flake). Wait for
-	// readiness so the test asserts against the fully-built index.
-	pathHopDeadline := time.After(5 * time.Second)
-	for !store.PathHopIndexReady() {
-		select {
-		case <-pathHopDeadline:
-			t.Fatal("path-hop index not ready within 5s")
-		case <-time.After(10 * time.Millisecond):
-		}
+	if !store.WaitIndexesReady(5 * time.Second) {
+		t.Fatal("background indexes not ready within 5s")
 	}
 	srv.store = store
 	router := mux.NewRouter()

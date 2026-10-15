@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sort"
@@ -187,6 +189,48 @@ func newResolver(pm *prefixMap) func(string) string {
 	}
 }
 
+// reachNodeScopes returns the node's inferred default_scope and, when an
+// observer /neighbors report has confirmed it, the configured_scope and the
+// instant that confirmation was reported (#1865).
+//
+// Both columns are optional: they are added by migration and an older database
+// simply lacks them, so each is gated on the schema flag the handle probed at
+// open time. Every return value is best-effort — a missing row, a missing
+// column or a scan error yields empty strings, because a reach report must
+// still render for a node we know nothing else about.
+func (s *Server) reachNodeScopes(ctx context.Context, pubkey string) (string, string, string) {
+	if s.db == nil || s.db.conn == nil {
+		return "", "", ""
+	}
+	cols := make([]string, 0, 3)
+	if s.db.hasDefaultScope {
+		cols = append(cols, "default_scope")
+	}
+	if s.db.hasConfiguredScope {
+		cols = append(cols, "configured_scope", "configured_scope_at")
+	}
+	if len(cols) == 0 {
+		return "", "", ""
+	}
+	vals := make([]sql.NullString, len(cols))
+	args := make([]interface{}, len(cols))
+	for i := range vals {
+		args[i] = &vals[i]
+	}
+	row := s.db.conn.QueryRowContext(ctx,
+		"SELECT "+strings.Join(cols, ", ")+" FROM nodes WHERE public_key = "+s.db.parameter(1), pubkey)
+	if err := row.Scan(args...); err != nil {
+		return "", "", ""
+	}
+	out := map[string]string{}
+	for i, c := range cols {
+		if vals[i].Valid {
+			out[c] = vals[i].String
+		}
+	}
+	return out["default_scope"], out["configured_scope"], out["configured_scope_at"]
+}
+
 type NodeReachInfo struct {
 	Pubkey    string   `json:"pubkey"`
 	Name      string   `json:"name"`
@@ -194,6 +238,15 @@ type NodeReachInfo struct {
 	Lat       *float64 `json:"lat"`
 	Lon       *float64 `json:"lon"`
 	FirstSeen string   `json:"first_seen"`
+	// #1865: region scopes, so a printed reach report says which region the
+	// node actually serves. DefaultScope is INFERRED from the transport scope
+	// of observed adverts; ConfiguredScope is CONFIRMED, read back off the node
+	// itself via an observer /neighbors report. Both omitempty: an instance
+	// whose schema predates either column, or a node that has never been
+	// confirmed, sends neither field and the UI shows nothing.
+	DefaultScope      string `json:"default_scope,omitempty"`
+	ConfiguredScope   string `json:"configured_scope,omitempty"`
+	ConfiguredScopeAt string `json:"configured_scope_at,omitempty"`
 }
 type NodeReachWindow struct {
 	Days  int    `json:"days"`
@@ -280,6 +333,12 @@ type reachCacheEntry struct {
 type reachState struct {
 	cacheMu sync.RWMutex
 	cache   map[string]reachCacheEntry
+	// buildSem bounds how many cold-cache reach scans run at the same time.
+	// singleflight only collapses identical keys; distinct (pubkey, days)
+	// keys each start a scan, and the endpoint is unauthenticated, so
+	// without a cap a handful of requests can hold every database reader.
+	buildSemOnce sync.Once
+	buildSem     chan struct{}
 	// sf dedups concurrent cold-cache requests for the same key so N
 	// simultaneous callers run the scan + attribution once, not N times.
 	sf singleflight.Group
@@ -441,6 +500,11 @@ func (s *Server) handleNodeReach(w http.ResponseWriter, r *http.Request) {
 		if raw, ok := s.reachCacheGet(cacheKey); ok {
 			return raw, nil
 		}
+		release, ok := s.reachAcquireBuildSlot()
+		if !ok {
+			return nil, errReachBusy
+		}
+		defer release()
 		resp, ok, cErr := s.computeNodeReach(r.Context(), pubkey, days)
 		if cErr != nil {
 			// Real backend failure (e.g. DB scan exploded) — propagate so the
@@ -459,6 +523,11 @@ func (s *Server) handleNodeReach(w http.ResponseWriter, r *http.Request) {
 		s.reachCachePut(cacheKey, raw)
 		return raw, nil
 	})
+	if errors.Is(err, errReachBusy) {
+		w.Header().Set("Retry-After", strconv.Itoa(reachBusyRetryAfterSeconds))
+		writeError(w, http.StatusTooManyRequests, "too many reach computations in progress, retry shortly")
+		return
+	}
 	if err != nil {
 		writeError(w, 500, "reach computation failed")
 		return
@@ -511,6 +580,10 @@ func (s *Server) computeNodeReach(ctx context.Context, pubkey string, days int) 
 	// single bulk SELECT). Missing → empty string (the node may be
 	// observer-only or pre-first_seen-schema).
 	firstSeen := self.FirstSeen
+
+	// #1865: scopes for the report header. Single-row lookup rather than widening
+	// buildNodeInfoMap's bulk SELECT, which every other consumer would pay for.
+	defScope, confScope, confAt := s.reachNodeScopes(ctx, pubkey)
 
 	// assemble links
 	links := make([]NodeReachLink, 0, len(d.we)+len(d.they))
@@ -576,7 +649,8 @@ func (s *Server) computeNodeReach(ctx context.Context, pubkey string, days int) 
 	selfLat, selfLon := gpsPtrs(self)
 	return NodeReachResponse{
 		Node: NodeReachInfo{Pubkey: pubkey, Name: self.Name, Role: self.Role,
-			Lat: selfLat, Lon: selfLon, FirstSeen: firstSeen},
+			Lat: selfLat, Lon: selfLon, FirstSeen: firstSeen,
+			DefaultScope: defScope, ConfiguredScope: confScope, ConfiguredScopeAt: confAt},
 		Window:         NodeReachWindow{Days: days, Since: since.Format(time.RFC3339)},
 		ReliableTokens: toks,
 		Importance: NodeReachImportance{
@@ -662,6 +736,23 @@ func (s *Server) getDegreeSnapshot(ctx context.Context) *degreeSnapshot {
 	return snap
 }
 
+// reachScanSQL builds the windowed reach scan. Arguments are the window
+// start, one LIKE pattern per token, and the hard row limit.
+// SQLite CROSS JOIN keeps the timestamp window as the outer loop (#2155).
+// PostgreSQL retains its ordinary JOIN syntax and native planner.
+func (db *DB) reachScanSQL(nTokens int) string {
+	likes := make([]string, nTokens)
+	for i := range likes {
+		likes[i] = fmt.Sprintf(db.nativeSQL("o.path_json LIKE %s", "o.path_json ILIKE %s ESCAPE ''"), db.parameter(i+2))
+	}
+	return `SELECT LOWER(COALESCE(obs.id,'')), LOWER(COALESCE(t.from_pubkey,'')), COALESCE(t.payload_type,0), o.path_json, o.snr
+	      FROM observations o
+	      ` + db.nativeSQL("CROSS JOIN", "JOIN") + ` transmissions t ON t.id = o.transmission_id
+	      LEFT JOIN observers obs ON obs.rowid = o.observer_idx
+	      WHERE o.timestamp >= ` + db.parameter(1) + ` AND (` + strings.Join(likes, " OR ") + `)
+	      LIMIT ` + db.parameter(nTokens+2)
+}
+
 // scanReachRows reads windowed observations whose path contains any reliable
 // token, with the originator + observer + snr needed for attribution. Observer
 // id and originator pubkey are lowercased in SQL (not per row), the path slice
@@ -676,7 +767,6 @@ func (s *Server) scanReachRows(ctx context.Context, tokens map[string]bool, sinc
 	if len(tokens) == 0 {
 		return nil, nil // defensive: an empty LIKE chain would render `AND ()` (SQL error)
 	}
-	likes := make([]string, 0, len(tokens))
 	args := []interface{}{sinceEpoch}
 	// Sort tokens so the generated SQL text is byte-stable across requests
 	// with the same token set — preserves the driver's prepared-statement
@@ -687,17 +777,10 @@ func (s *Server) scanReachRows(ctx context.Context, tokens map[string]bool, sinc
 	}
 	sort.Strings(toks)
 	for _, tok := range toks {
-		likes = append(likes, "o.path_json LIKE ?")
 		args = append(args, "%\""+tok+"\"%")
 	}
-	q := `SELECT LOWER(COALESCE(obs.id,'')), LOWER(COALESCE(t.from_pubkey,'')), COALESCE(t.payload_type,0), o.path_json, o.snr
-	      FROM observations o
-	      JOIN transmissions t ON t.id = o.transmission_id
-	      LEFT JOIN observers obs ON obs.rowid = o.observer_idx
-	      WHERE o.timestamp >= ? AND (` + strings.Join(likes, " OR ") + `)
-	      LIMIT ?`
 	args = append(args, reachScanRowLimit)
-	rows, err := s.db.conn.QueryContext(ctx, q, args...)
+	rows, err := s.db.conn.QueryContext(ctx, s.db.reachScanSQL(len(toks)), args...)
 	if err != nil {
 		log.Printf("[reach] scan query failed: %v", err)
 		return nil, err
@@ -735,4 +818,27 @@ func (s *Server) scanReachRows(ctx context.Context, tokens map[string]bool, sinc
 		return nil, err
 	}
 	return out, nil
+}
+
+// reachMaxConcurrentBuilds is the number of cold-cache reach scans allowed at
+// once. Two keeps half of the default 4-connection PostgreSQL pool free for
+// every other handler while a scan runs.
+const reachMaxConcurrentBuilds = 2
+
+// reachBusyRetryAfterSeconds is the Retry-After we send with a 429.
+const reachBusyRetryAfterSeconds = 5
+
+// errReachBusy is returned inside the singleflight when no build slot is free.
+var errReachBusy = errors.New("reach: too many concurrent builds")
+
+// reachAcquireBuildSlot takes a build slot without blocking. It returns a
+// release func and true, or nil and false when all slots are busy.
+func (s *Server) reachAcquireBuildSlot() (func(), bool) {
+	s.reach.buildSemOnce.Do(func() { s.reach.buildSem = make(chan struct{}, reachMaxConcurrentBuilds) })
+	select {
+	case s.reach.buildSem <- struct{}{}:
+		return func() { <-s.reach.buildSem }, true
+	default:
+		return nil, false
+	}
 }

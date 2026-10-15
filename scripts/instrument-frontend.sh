@@ -16,6 +16,11 @@ if [ -d public/img ]; then
   mkdir -p public-instrumented/img
   cp -r public/img/. public-instrumented/img/
 fi
+# The branded shell and favicon share this static emblem directory.
+if [ -d public/brand ]; then
+  mkdir -p public-instrumented/brand
+  cp -r public/brand/. public-instrumented/brand/
+fi
 # Copy webfonts (e.g. public/fonts/aldrich-regular.woff2 used by the
 # navbar logo SVG @font-face, #1137 follow-up). Same SPA-fallback gotcha
 # as /img — without this, GET /fonts/aldrich-regular.woff2 returns

@@ -13,10 +13,12 @@ Go backend + static frontend. No build step. No framework. No bundler.
 cmd/server/        — Go API server (REST + WebSocket broadcast + static file serving)
   main.go          — Entry point, flags, SPA handler
   routes.go        — All /api/* endpoints
-  store.go         — In-memory packet store + analytics + SQLite queries
+  store.go         — In-memory packet store + analytics + PostgreSQL queries
   config.go        — Configuration loading
   decoder.go       — MeshCore packet decoder
-cmd/ingestor/      — Go MQTT ingestor (separate binary, writes to shared SQLite DB)
+cmd/ingestor/      — Go MQTT ingestor (separate binary, writes telemetry to PostgreSQL)
+cmd/migrate/       — Offline schema bootstrap and verified SQLite upgrade importer
+internal/pgutil/   — PostgreSQL connections, role checks, native backup helpers
 public/            — Frontend (vanilla JS, one file per page) — ACTIVE, NOT DEPRECATED
   app.js           — SPA router, shared globals, theme loading
   roles.js         — ROLE_COLORS, TYPE_COLORS, health thresholds, shared helpers
@@ -34,21 +36,34 @@ public/            — Frontend (vanilla JS, one file per page) — ACTIVE, NOT 
   live.css         — Live page styles
   home.css         — Home page styles
   index.html       — SPA shell, script/style tags with __BUST__ placeholder (auto-replaced at server startup)
-test-fixtures/     — Real data SQLite fixture from staging (used for E2E tests)
+test-fixtures/     — Legacy SQLite fixture; prepare and import into PostgreSQL for E2E
 scripts/           — Tooling (coverage collector, fixture capture, frontend instrumentation)
 ```
 
 ### Data Flow
-1. MQTT brokers → Go ingestor (`cmd/ingestor/`) ingests packets → decodes → writes to SQLite
-2. Go server (`cmd/server/`) polls SQLite for new packets, broadcasts via WebSocket
+1. MQTT brokers → Go ingestor (`cmd/ingestor/`) ingests packets → decodes → writes to PostgreSQL
+2. Go server (`cmd/server/`) polls PostgreSQL for new packets, broadcasts via WebSocket
 3. Frontend fetches via REST API (`/api/*`), filters/sorts client-side
 
 ### Read/Write Separation Invariant (#1283)
-- **All DB writes live in `cmd/ingestor/`.** INSERT / UPDATE / DELETE / VACUUM /
-  schema migrations / retention all run in the ingestor process.
-- **`cmd/server/` is read-only.** It opens SQLite with `mode=ro` and must not
-  acquire a write lock. Adding a write-side helper (e.g. a `cachedRW`-style
-  RW connection) regresses this invariant and races the ingestor → SQLITE_BUSY.
+- **Runtime telemetry writes live in `cmd/ingestor/`.** INSERT / UPDATE /
+  DELETE and retention use a restricted writer role. PostgreSQL handles
+  autovacuum; offline `cmd/migrate/` owns schema installation and upgrades.
+- **`cmd/server/` never writes measurement data.** Its telemetry connection
+  uses a SELECT-only role and read-only transactions. Do not add a write-side
+  connection or grant the reader schema/owner privileges.
+- **Single exception: the separate accounts database (optional user
+  management).** When `userManagement.enabled`, the server writes accounts
+  through `internal/users` only. `users.Open` rejects the actual telemetry
+  database, including URL aliases, and `TestUsersOpenIsTheOnlyServerWritePath`
+  pins the one call site. Account and measurement databases stay separate.
+- **The ingestor reads approved channel names, never account rows.** With
+  `userManagement.channelProposals.enabled`, its dedicated role may SELECT
+  only `approved_channels` and the readiness marker. It uses a read-only
+  snapshot and retains the last good keys if readiness or refresh fails.
+- **Runtime roles never run DDL or mark an import ready.** Bootstrap/import
+  uses separate owner credentials. Tests must cover denied writes and
+  cross-database access with the real runtime grants.
 - Enforcement: `cmd/server/readonly_invariant_test.go` reflect-asserts that
   `PruneOldPackets`, `PruneOldMetrics`, and `RemoveStaleObservers` are NOT
   methods on the server's `*DB`. If you need a new write, add it to
@@ -90,7 +105,21 @@ Every change must consider performance impact BEFORE implementation. This codeba
 No proof = no merge.
 
 ### 1. No commit without tests
-Every change that touches logic MUST have tests. For Go backend: `cd cmd/server && go test ./...` and `cd cmd/ingestor && go test ./...`. For frontend: `node test-packet-filter.js && node test-aging.js && node test-frontend-helpers.js`. If you add new logic, add tests. No exceptions.
+Every change that touches logic MUST have tests. For Go backend: `cd cmd/server && go test ./...` and `cd cmd/ingestor && go test ./...`, or `make test` for all Go modules. For frontend: `node tests/unit/test-packet-filter.js && node tests/unit/test-aging.js && node tests/unit/test-frontend-helpers.js`. If you add new logic, add tests. No exceptions.
+
+The PostgreSQL runtime uses native Go (`pgx`). SQLite is retained only for
+the offline upgrade importer and legacy test fixtures. The importer still
+requires cgo (`github.com/mattn/go-sqlite3`); `CGO_ENABLED=0` links a stub
+that fails on the first SQLite query. Use `make build` / `make crossbuild`
+for the complete release, including the importer. Cross-building that
+importer requires [`zig`](https://ziglang.org/download/) or another suitable
+C cross compiler. Validate a real import, not just a successful build.
+
+Database integration tests require a disposable PostgreSQL 18 instance and
+`CORESCOPE_TEST_POSTGRES_URL` with test schema/database/role creation rights.
+They fail when the database is unavailable rather than silently skipping.
+Never point tests at a live instance. Runtime credentials stay in deployment
+environment variables and must not appear in logs or committed fixtures.
 
 ### 2. No commit without browser validation
 After pushing, verify the change works in an actual browser. Use `browser profile=openclaw` against the running instance. Take a screenshot if the change is visual. If you can't validate it, say so — don't claim it works.
@@ -200,7 +229,7 @@ All colors MUST use CSS variables. Never hardcode `#hex` values outside of `:roo
 ### Packet Filter (packet-filter.js)
 Standalone module. No dependencies on app globals (copies what it needs). Testable in Node.js:
 ```bash
-node test-packet-filter.js
+node tests/unit/test-packet-filter.js
 ```
 Uses firmware-standard type names (GRP_TXT, TXT_MSG, REQ) with aliases for convenience.
 
@@ -217,21 +246,13 @@ npm run test:full-coverage  # backend + instrumented frontend coverage via Playw
 ### Test Files
 ```bash
 # Backend (deterministic, run before every push)
-node test-packet-filter.js        # filter engine
-node test-aging.js                # node aging system
-node test-regional-filter.js      # regional observer filtering
-node test-decoder.js              # packet decoder
-node test-decoder-spec.js         # spec-driven + golden fixture tests
-node test-server-helpers.js       # extracted server functions
-node test-server-routes.js        # API route tests via supertest
-node test-packet-store.js         # in-memory packet store
-node test-db.js                   # SQLite operations
-node test-frontend-helpers.js     # frontend logic (via vm.createContext)
-node tools/e2e-test.js            # E2E: temp server + synthetic packets
-node tools/frontend-test.js       # frontend smoke: HTML, JS refs, API shapes
+sh test-all.sh                               # every suite in tests/unit
+node tests/unit/test-packet-filter.js        # filter engine
+node tests/unit/test-aging.js                # node aging system
+node tests/unit/test-frontend-helpers.js     # frontend logic (via vm.createContext)
 
 # Frontend E2E (requires running server or Playwright)
-node test-e2e-playwright.js       # 8 Playwright browser tests (default: localhost:3000)
+node tests/e2e/test-e2e-playwright.js       # Playwright browser tests (default: localhost:3000)
 ```
 
 ### Rules
@@ -246,14 +267,14 @@ node test-e2e-playwright.js       # 8 Playwright browser tests (default: localho
 2. Write unit tests for the logic
 3. Write/update Playwright tests if it's a UI change
 4. Run `npm test` — all tests must pass
-5. Run `node test-e2e-playwright.js` against a local server — E2E must pass
+5. Run `node tests/e2e/test-e2e-playwright.js` against a local server — E2E must pass
 6. THEN push to master
 
 ### Testing infrastructure
 - **Backend coverage**: c8 tracks server-side code in-process
 - **Frontend coverage**: Istanbul instruments `public/*.js` → Playwright exercises them → `window.__coverage__` extracted → nyc reports. Instrumented files are generated fresh each CI run, never checked in.
 - **CI pipeline**: backend tests + coverage → instrument frontend → start local server → Playwright E2E + coverage collection → badges update → deploy (only if all pass)
-- **Playwright tests default to localhost:3000** — NEVER run against prod. CI sets `BASE_URL=http://localhost:13581`. Running locally: start your server, then `node test-e2e-playwright.js`
+- **Playwright tests default to localhost:3000** — NEVER run against prod. CI sets `BASE_URL=http://localhost:13581`. Running locally: start your server, then `node tests/e2e/test-e2e-playwright.js`
 - **ARM machines**: Basic Playwright tests work with system chromium (`CHROMIUM_PATH=/usr/bin/chromium-browser`). Heavy coverage collection scripts may crash — use CI for those.
 
 Tests that need live mesh data can use `https://analyzer.00id.net` — all API endpoints are public, no auth required.
@@ -288,7 +309,7 @@ If the same logic exists in two places, it MUST be extracted into a shared funct
 ### Testability
 - **Write functions that are easy to test.** Pure functions (input → output, no side effects) are ideal. If a function reads from the DOM, the DB, and localStorage, it's untestable without mocking everything.
 - **Dependency injection enables testing.** Pass the node list, the map reference, the API function as parameters. Tests can substitute fakes.
-- **Test the real code, not copies.** Don't paste a function into a test file and test the copy. Import/require the actual module. If the module isn't importable (IIFE, browser-only), refactor it so it is — or use `vm.createContext` like `test-frontend-helpers.js` does.
+- **Test the real code, not copies.** Don't paste a function into a test file and test the copy. Import/require the actual module. If the module isn't importable (IIFE, browser-only), refactor it so it is — or use `vm.createContext` like `tests/unit/test-frontend-helpers.js` does.
 - **Every bug fix gets a regression test.** If it broke once, it'll break again. The test proves it stays fixed.
 
 ### Type Safety (without TypeScript)
@@ -370,7 +391,7 @@ One logical change per commit. Each commit is deployable. Each commit has its te
 | Subagent timed out mid-work | 4 | Give clear scope, don't try to run slow pipelines locally |
 
 ## File Naming
-- Tests: `test-{feature}.js` in repo root
+- Tests: `test-{feature}.js` in `tests/unit/` (standalone, listed in `test-all.sh`) or `tests/e2e/` (browser, listed in `scripts/non-unit-tests.json`) — never in repo root
 - No build step, no transpilation — write ES2020 for server, ES5/6 for frontend (broad browser support)
 
 ### Deep Linking

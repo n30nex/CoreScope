@@ -52,6 +52,52 @@ func DecodePathFromRawHex(rawHex string) ([]string, error) {
 	return hops, nil
 }
 
+// HashSize returns the path hash size (1-3 bytes) the originator chose, read
+// from the path byte of raw_hex, or 0 when the packet does not carry one.
+//
+// A flood packet always carries it: Mesh::sendFlood sets the path byte to
+// (size-1)<<6 before the first hop, so it holds even at 0 hops. A direct
+// packet with no hops carries none: Mesh::sendZeroHop writes 0x00, and a
+// direct path that has run out of hops has no hash left to size. That is the
+// same rule cmd/server/decoder.go applies to path.hashSize. TRACE path bytes
+// are SNR readings, not hashes. Only the first few bytes are parsed, so this
+// is cheap on hot paths.
+func HashSize(rawHex string) int {
+	header, ok := hexByteAt(rawHex, 0)
+	if !ok || !PathBytesAreHops(header>>2&0x0F) {
+		return 0
+	}
+	routeType := int(header & 0x03)
+	offset := 1
+	if IsTransportRoute(routeType) {
+		offset += 4
+	}
+	pathByte, ok := hexByteAt(rawHex, offset)
+	if !ok {
+		return 0
+	}
+	if pathByte&0x3F == 0 && (routeType == RouteDirect || routeType == RouteTransportDirect) {
+		return 0
+	}
+	size := int(pathByte>>6) + 1
+	if size > 3 {
+		return 0 // 0b11 is reserved; firmware rejects sizes above 3
+	}
+	return size
+}
+
+// hexByteAt decodes the byte at byte index i of a hex string.
+func hexByteAt(s string, i int) (byte, bool) {
+	if len(s) < 2*i+2 {
+		return 0, false
+	}
+	b, err := hex.DecodeString(s[2*i : 2*i+2])
+	if err != nil {
+		return 0, false
+	}
+	return b[0], true
+}
+
 // DecodeHopsForPayload returns the header path hops only when the payload type's
 // header bytes are actually route hops (i.e. PathBytesAreHops(payloadType) is true).
 // For TRACE packets it returns (nil, ErrPayloadHasNoHeaderHops) so the caller is

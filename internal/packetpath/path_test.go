@@ -3,6 +3,7 @@ package packetpath
 import (
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -146,5 +147,33 @@ func TestDecodeHopsForPayload_TraceReturnsError(t *testing.T) {
 	}
 	if hops != nil {
 		t.Errorf("expected nil hops for TRACE, got %v", hops)
+	}
+}
+
+// TestHashSize runs the cases shared with pathHashSize in public/app.js
+// (tests/unit/test-frontend-helpers.js reads the same file), so the Go and JS
+// implementations cannot drift apart without one of the two suites failing.
+func TestHashSize(t *testing.T) {
+	data, err := os.ReadFile("../../test-fixtures/path-hash-size-cases.json")
+	if err != nil {
+		t.Fatalf("read shared cases: %v", err)
+	}
+	var fixture struct {
+		Cases []struct {
+			Name string `json:"name"`
+			Raw  string `json:"raw"`
+			Want int    `json:"want"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatalf("parse shared cases: %v", err)
+	}
+	if len(fixture.Cases) == 0 {
+		t.Fatal("shared cases file has no cases")
+	}
+	for _, c := range fixture.Cases {
+		if got := HashSize(c.Raw); got != c.Want {
+			t.Errorf("%s: HashSize(%q) = %d, want %d", c.Name, c.Raw, got, c.Want)
+		}
 	}
 }

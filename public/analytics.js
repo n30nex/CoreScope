@@ -32,6 +32,25 @@
     if (_scopesRefreshTimer) { clearInterval(_scopesRefreshTimer); _scopesRefreshTimer = null; }
   }
 
+  // #1997 — the distance tab's lazy index answers 202 {status:"building"}
+  // until it is built. Retry on the server's own interval rather than
+  // rendering the placeholder as data, and stop the moment the tab changes
+  // or the page goes away, so a pending retry cannot render into a view the
+  // user has left.
+  var _distanceRetryTimer = null;
+  function _stopDistanceRetry() {
+    if (_distanceRetryTimer) { clearTimeout(_distanceRetryTimer); _distanceRetryTimer = null; }
+  }
+  // Exposed for tests: the two decisions worth pinning, kept pure.
+  function _distanceIsBuilding(data) {
+    return !!(data && data.status === 'building' && !data.summary);
+  }
+  function _distanceRetryDelayMs(data) {
+    var s = data && Number(data.retry_after_seconds);
+    if (!isFinite(s) || s <= 0) s = 5;      // server default when it says nothing
+    return Math.min(Math.max(s, 1), 30) * 1000;  // clamp: never hammer, never stall
+  }
+
   // --- Status color helpers (read from CSS variables for theme support) ---
   function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
   function statusGreen() { return cssVar('--status-green') || '#22c55e'; }
@@ -178,6 +197,7 @@
       // #1085 — Roles tab owns its own 60s auto-refresh; stop it on switch.
       if (_currentTab !== 'roles') _stopRolesRefresh();
       if (_currentTab !== 'scopes') _stopScopesRefresh();
+      if (_currentTab !== 'distance') _stopDistanceRetry();
       _updateAnalyticsUrl();
       renderTab(_currentTab);
     });
@@ -489,7 +509,7 @@
     }
     var totalScore = (data && typeof data.total_score === 'number') ? data.total_score : 0;
     if (totalScore <= 0) {
-      return '<div class="text-muted" style="padding:20px">No relay activity observed in this window (all packets direct).</div>';
+      return '<div class="text-muted" style="padding:20px">No relay activity observed in this window.</div>';
     }
     // Issue #1768 — surface the LoRa preset baked into the ToA score. Share
     // numbers are only meaningful relative to one PHY preset; operators must
@@ -518,8 +538,17 @@
     var palette = ['#ef4444','#f59e0b','#22c55e','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#64748b','#f97316','#06b6d4','#84cc16'];
     var html = '<div class="dumbbell-chart" style="display:flex;flex-direction:column;gap:8px;padding:8px 4px">';
     if (presetCaption) html += presetCaption;
+    if (rows.some(function (r) { return r.payload_type === 'ADVERT'; })) {
+      html += '<div class="dumbbell-evidence-note text-muted" style="font-size:11px">Known route evidence: Mixed adverts were observed as both flood and direct with an empty remaining path. An empty path does not prove an original zero-hop send. Other adverts have no classified evidence yet. Background backfill improves classification automatically. Available history is a lower bound; older overwritten observations cannot be recovered, and failed evidence writes may leave gaps.</div>';
+    }
     rows.forEach(function (r, i) {
       var name = r.payload_type || 'UNK';
+      if (name === 'ADVERT') {
+        if (r.advert_kind === 'flood') name = 'Flood adverts';
+        else if (r.advert_kind === 'zero_hop') name = 'Direct adverts (empty path)';
+        else if (r.advert_kind === 'mixed') name = 'Mixed adverts';
+        else if (r.advert_kind === 'other') name = 'Other adverts';
+      }
       var cnt = Number(r.count || 0);
       var cpct = Number(r.count_pct || 0);
       var apct = Number(r.airtime_pct || 0);
@@ -540,7 +569,7 @@
         'Count: ' + cnt.toLocaleString() + ' (' + cpct.toFixed(2) + '%)\n' +
         'Airtime: ' + apct.toFixed(2) + '% (score ' + scoreStr + ' · airtime × repeaters)\n' +
         'Score = LoRa Time-on-Air × distinct repeaters. Within-mesh only.';
-      html += '<div class="dumbbell-row" title="' + esc(tip) + '" style="display:grid;grid-template-columns:80px 1fr 180px;align-items:center;gap:10px;font-size:12px">' +
+      html += '<div class="dumbbell-row" title="' + esc(tip) + '" style="display:grid;grid-template-columns:var(--relay-airtime-columns,80px 1fr 180px);align-items:center;gap:10px;font-size:12px">' +
         '<div class="dumbbell-label" style="font-weight:600;color:var(--text)">' + esc(name) + '</div>' +
         '<div class="dumbbell-track" style="position:relative;height:18px;background:var(--bg-elev,rgba(127,127,127,0.12));border-radius:9px">' +
           '<div class="dumbbell-connector" style="position:absolute;top:50%;left:' + loPct.toFixed(3) + '%;width:' + (hiPct - loPct).toFixed(3) + '%;height:2px;background:var(--text-muted,#888);transform:translateY(-50%);opacity:0.5"></div>' +
@@ -555,7 +584,7 @@
       '</div>';
     });
     // Axis legend.
-    html += '<div class="dumbbell-axis" style="display:grid;grid-template-columns:80px 1fr 180px;gap:10px;color:var(--text-muted);font-size:11px;margin-top:4px">' +
+    html += '<div class="dumbbell-axis" style="display:grid;grid-template-columns:var(--relay-airtime-columns,80px 1fr 180px);gap:10px;color:var(--text-muted);font-size:11px;margin-top:4px">' +
       '<div></div>' +
       '<div style="display:flex;justify-content:space-between"><span>0%</span><span>50%</span><span>100%</span></div>' +
       '<div></div>' +
@@ -758,6 +787,12 @@
         </div>
       </div>
 
+      <div class="analytics-card" id="retransmission-pressure">
+        <h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-chart-line"/></svg> Retransmission Pressure (proxy)</h3>
+        <p class="text-muted">Average number of distinct repeaters seen in the observed paths of each flood packet, over time.</p>
+        <div id="rtxPressureChart"><div class="text-muted" style="padding:20px">Loading…</div></div>
+      </div>
+
       <div class="analytics-row">
         <div class="analytics-card flex-1">
           <h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-handshake"/></svg> Repeater Pair Heatmap</h3>
@@ -808,6 +843,141 @@
           obsId === '__all' ? renderAllObserversReach(topo.perObserverReach) : renderPerObserverReach(topo.perObserverReach, obsId);
       });
     }
+    loadRetransmissionPressure();
+  }
+
+  // ===================== RETRANSMISSION PRESSURE (#1699) =====================
+  // Bucket per time-window choice. "All data" stays on 1h so it matches the
+  // server's recomputed default shape instead of a TTL-cache compute.
+  var RTX_BUCKET_BY_WINDOW = { '1h': '5m', '24h': '1h', '7d': '1h', '30d': '6h' };
+  function retransmissionBucketFor(win) {
+    return Object.prototype.hasOwnProperty.call(RTX_BUCKET_BY_WINDOW, win) ? RTX_BUCKET_BY_WINDOW[win] : '1h';
+  }
+
+  var _rtxRequestSeq = 0;
+  async function loadRetransmissionPressure() {
+    if (!document.getElementById('rtxPressureChart')) return;
+    var seq = ++_rtxRequestSeq;
+    var twEl = document.getElementById('analyticsTimeWindow');
+    var tw = twEl ? twEl.value : '';
+    var qs = RegionFilter.regionQueryString() +
+      (tw ? '&window=' + encodeURIComponent(tw) : '') +
+      '&bucket=' + retransmissionBucketFor(tw);
+    var html;
+    try {
+      var data = await api('/analytics/retransmissions?' + qs.slice(1), { ttl: CLIENT_TTL.analyticsRF });
+      html = renderRetransmissionChart(data);
+    } catch (e) {
+      html = '<div class="text-muted" role="alert" style="padding:20px">Failed to load retransmission pressure: ' + esc(e.message) + '</div>';
+    }
+    // A newer request (window/region change) or a tab switch wins.
+    var host = document.getElementById('rtxPressureChart');
+    if (seq !== _rtxRequestSeq || !host) return;
+    host.innerHTML = html;
+  }
+
+  // renderRetransmissionChart draws avg distinct repeaters per flood packet
+  // (the primary line, with a y axis) plus two context series scaled to their
+  // own maximum: flood packets per bucket (bars) and observers per bucket
+  // (dashed). Buckets further apart than bucket_seconds break the lines, so a
+  // gap in data is never drawn as a trend.
+  function renderRetransmissionChart(data) {
+    var noData = '<div class="text-muted" style="padding:20px">No flood packets in this window.</div>';
+    var raw = data && Array.isArray(data.buckets) ? data.buckets : [];
+    var pts = [];
+    for (var i = 0; i < raw.length; i++) {
+      var t = Date.parse(raw[i].start);
+      if (!isFinite(t)) continue;
+      pts.push({ t: t, start: String(raw[i].start), avg: Number(raw[i].avg_repeaters) || 0,
+        packets: Number(raw[i].packets) || 0, observers: Number(raw[i].observers) || 0 });
+    }
+    if (!pts.length) return noData;
+    var stepMs = (Number(data.bucket_seconds) || 3600) * 1000;
+    var w = 800, h = 220, padL = 40, padR = 16, padT = 12, padB = 28;
+    var plotW = w - padL - padR, plotH = h - padT - padB;
+    var tMin = pts[0].t, tMax = pts[pts.length - 1].t;
+    var maxAvg = 1, maxPkts = 1, maxObs = 1;
+    pts.forEach(function (p) {
+      if (p.avg > maxAvg) maxAvg = p.avg;
+      if (p.packets > maxPkts) maxPkts = p.packets;
+      if (p.observers > maxObs) maxObs = p.observers;
+    });
+    var yMax = Math.ceil(maxAvg);
+    // The x domain spans whole buckets, so bars and points (at bucket
+    // centres) stay inside the plot, also for a single bucket.
+    var span = tMax + stepMs - tMin;
+    function x(tt) { return padL + (tt + stepMs / 2 - tMin) / span * plotW; }
+    function yAvg(v) { return padT + plotH - (v / yMax) * plotH; }
+    function yObs(v) { return padT + plotH - (v / maxObs) * plotH * 0.9; }
+    function f(n) { return n.toFixed(1); }
+
+    var svg = '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;max-height:' + h + 'px" role="img" aria-label="Average distinct repeaters per flood packet over time"><title>Average distinct repeaters per flood packet over time</title>';
+    for (var g = 0; g <= 4; g++) {
+      var gy = padT + plotH * g / 4;
+      svg += '<line x1="' + padL + '" y1="' + f(gy) + '" x2="' + (w - padR) + '" y2="' + f(gy) + '" stroke="var(--border)" stroke-dasharray="2"/>';
+      svg += '<text x="' + (padL - 4) + '" y="' + f(gy + 4) + '" text-anchor="end" font-size="10" fill="var(--text-muted)">' + esc(String(Math.round(yMax * (4 - g) / 4 * 10) / 10)) + '</text>';
+    }
+    // Context: flood packets per bucket, scaled to 30% of the plot height.
+    var barW = Math.max(1, stepMs / span * plotW * 0.8);
+    pts.forEach(function (p) {
+      var bh = (p.packets / maxPkts) * plotH * 0.3;
+      svg += '<rect class="rtx-packets-bar" x="' + f(x(p.t) - barW / 2) + '" y="' + f(padT + plotH - bh) + '" width="' + f(barW) + '" height="' + f(bh) + '" fill="var(--accent)" opacity="0.15"/>';
+    });
+    // Split into runs of consecutive buckets.
+    var runs = [], run = [];
+    pts.forEach(function (p, idx) {
+      if (idx > 0 && p.t - pts[idx - 1].t > stepMs) { runs.push(run); run = []; }
+      run.push(p);
+    });
+    runs.push(run);
+    runs.forEach(function (r) {
+      if (r.length === 1) {
+        svg += '<circle class="rtx-avg-dot" cx="' + f(x(r[0].t)) + '" cy="' + f(yAvg(r[0].avg)) + '" r="3" fill="var(--accent)"/>';
+        return;
+      }
+      svg += '<polyline class="rtx-obs-line" points="' + r.map(function (p) { return f(x(p.t)) + ',' + f(yObs(p.observers)); }).join(' ') + '" fill="none" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="4 3"/>';
+      svg += '<polyline class="rtx-avg-line" points="' + r.map(function (p) { return f(x(p.t)) + ',' + f(yAvg(p.avg)); }).join(' ') + '" fill="none" stroke="var(--accent)" stroke-width="2"/>';
+    });
+    // Per-bucket hover targets.
+    pts.forEach(function (p) {
+      var tip = p.start + '\nAvg distinct repeaters: ' + p.avg.toFixed(1) + '\nFlood packets: ' + p.packets + '\nObservers: ' + p.observers;
+      svg += '<circle class="rtx-hit" cx="' + f(x(p.t)) + '" cy="' + f(yAvg(p.avg)) + '" r="5" fill="transparent"><title>' + esc(tip) + '</title></circle>';
+    });
+    var multiDay = tMax - tMin > 2 * 86400000;
+    var labelEvery = Math.max(1, Math.ceil(pts.length / 6));
+    for (var li = 0; li < pts.length; li += labelEvery) {
+      var lbl = multiDay ? pts[li].start.slice(5, 10) : pts[li].start.slice(11, 16);
+      svg += '<text x="' + f(x(pts[li].t)) + '" y="' + (h - 8) + '" text-anchor="middle" font-size="9" fill="var(--text-muted)">' + esc(lbl) + '</text>';
+    }
+    svg += '</svg>';
+
+    var s = (data && data.summary) || {};
+    var sPackets = Number(s.packets) || 0;
+    var oneBytePct = sPackets ? Math.round((Number(s.one_byte_packets) || 0) / sPackets * 100) : 0;
+    var html = svg;
+    html += '<div class="timeline-legend">' +
+      '<span><span class="legend-dot" style="background:var(--accent)"></span>Avg distinct repeaters per flood packet</span>' +
+      '<span><span class="legend-dot" style="background:var(--text-muted)"></span>Observers (dashed, scaled)</span>' +
+      '<span><span class="legend-dot" style="background:var(--accent);opacity:0.3"></span>Flood packets (bars, scaled)</span>' +
+      '</div>';
+    html += '<div class="rf-stats">' +
+      '<span>Avg: <strong>' + esc((Number(s.avg_repeaters) || 0).toFixed(1)) + ' repeaters/packet</strong></span>' +
+      '<span>Flood packets: <strong>' + esc(sPackets.toLocaleString()) + '</strong></span>' +
+      '<span>Observers: <strong>' + esc(String(Number(s.observers) || 0)) + '</strong></span>' +
+      '<span>1-byte hashes: <strong>' + oneBytePct + '%</strong></span>' +
+      '<span>Heard without repeaters: <strong>' + esc(String(Number(s.no_repeater_packets) || 0)) + '</strong></span>' +
+      '</div>';
+    html += '<p class="text-muted" style="font-size:12px;margin-top:8px">' +
+      'A proxy for collision pressure, not a measured collision rate. ' +
+      'It counts only repeaters that at least one observer heard, so observer coverage moves the line too: ' +
+      'adding or losing observers (dashed line) changes it without any change on air. ' +
+      'Hop prefixes are not resolved to nodes; a prefix counts once per flood, also when two repeaters share it, so the value is a lower bound, ' +
+      'most of all for packets on 1-byte hashes. Flood routes only (TRACE and direct routes excluded). ' +
+      'A packet heard again more than 5 minutes after its previous observation counts as a new flood; ' +
+      'each flood sits in the bucket where it started, so the newest bucket may still be filling. ' +
+      'The area filter does not apply to this chart.' +
+      '</p>';
+    return html;
   }
 
   function renderRepeaterTable(repeaters) {
@@ -1506,18 +1676,18 @@
   async function renderCollisionTab(el, data, collisionData) {
     el.innerHTML = `
       <nav id="hashIssuesToc" style="display:flex;gap:12px;margin-bottom:12px;font-size:13px;flex-wrap:wrap">
-        <a href="#/analytics?tab=collisions&section=inconsistentHashSection" style="color:var(--link-color)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-warning"/></svg> Inconsistent Sizes</a>
+        <a data-hash-section="inconsistentHashSection" href="#/analytics?tab=collisions&section=inconsistentHashSection" style="color:var(--link-color)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-warning"/></svg> Inconsistent Sizes</a>
         <span style="color:var(--border)">|</span>
-        <a href="#/analytics?tab=collisions&section=hashMatrixSection" style="color:var(--link-color)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-list-numbers"/></svg> Hash Matrix</a>
+        <a data-hash-section="hashMatrixSection" href="#/analytics?tab=collisions&section=hashMatrixSection" style="color:var(--link-color)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-list-numbers"/></svg> Hash Matrix</a>
         <span style="color:var(--border)">|</span>
-        <a href="#/analytics?tab=collisions&section=collisionRiskSection" style="color:var(--link-color)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-bomb"/></svg> Collision Risk</a>
+        <a data-hash-section="collisionRiskSection" href="#/analytics?tab=collisions&section=collisionRiskSection" style="color:var(--link-color)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-bomb"/></svg> Collision Risk</a>
         <span style="color:var(--border)">|</span>
         <a href="#/analytics?tab=prefix-tool" style="color:var(--link-color)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-magnifying-glass"/></svg> Check a prefix →</a>
       </nav>
       <p class="text-muted" style="margin:0 0 12px;font-size:0.78em">Collisions <strong>actually observed in packet traffic</strong> — among <strong>repeaters</strong> grouped by their configured hash size. For <em>theoretical</em> address conflicts that <em>would</em> occur if all repeaters used a given hash size, see the <a href="#/analytics?tab=prefix-tool" style="color:var(--link-color)">Prefix Tool</a> tab.</p>
 
       <div class="analytics-card" id="inconsistentHashSection">
-        <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-warning"/></svg> Inconsistent Hash Sizes</h3><a href="#/analytics?tab=collisions" style="font-size:11px;color:var(--text-muted)">↑ top</a></div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-warning"/></svg> Inconsistent Hash Sizes</h3><a data-hash-section="" href="#/analytics?tab=collisions" style="font-size:11px;color:var(--text-muted)">↑ top</a></div>
         <p class="text-muted" style="margin:4px 0 8px;font-size:0.8em">Repeaters and room servers sending adverts with varying hash sizes in the last 7 days. Originally caused by a <a href="https://github.com/meshcore-dev/MeshCore/commit/fcfdc5f" target="_blank" style="color:var(--link-color)">firmware bug</a> where automatic adverts ignored the configured multibyte path setting, fixed in <a href="https://github.com/meshcore-dev/MeshCore/releases/tag/repeater-v1.14.1" target="_blank" style="color:var(--link-color)">repeater v1.14.1</a>. Companion nodes are excluded.</p>
         <div id="inconsistentHashList"><div class="text-muted" style="padding:8px"><span class="spinner"></span> Loading…</div></div>
       </div>
@@ -1525,7 +1695,7 @@
       <div class="analytics-card" id="hashMatrixSection">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <h3 style="margin:0" id="hashMatrixTitle"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-list-numbers"/></svg> Hash Usage Matrix</h3>
-          <a href="#/analytics?tab=collisions" style="font-size:11px;color:var(--text-muted)">↑ top</a>
+          <a data-hash-section="" href="#/analytics?tab=collisions" style="font-size:11px;color:var(--text-muted)">↑ top</a>
         </div>
         <div style="display:flex;align-items:center;gap:16px;margin:8px 0">
           <div class="hash-byte-selector" id="hashByteSelector" style="display:flex;gap:4px">
@@ -1539,7 +1709,7 @@
       </div>
 
       <div class="analytics-card" id="collisionRiskSection">
-        <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0" id="collisionRiskTitle"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-bomb"/></svg> Collision Risk</h3><a href="#/analytics?tab=collisions" style="font-size:11px;color:var(--text-muted)">↑ top</a></div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0" id="collisionRiskTitle"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-bomb"/></svg> Collision Risk</h3><a data-hash-section="" href="#/analytics?tab=collisions" style="font-size:11px;color:var(--text-muted)">↑ top</a></div>
         <div id="collisionList"><div class="text-muted" style="padding:8px">Loading…</div></div>
       </div>
     `;
@@ -1576,9 +1746,15 @@
 
     // Repeaters and routing nodes no longer needed — collision data is server-computed
 
-    let currentBytes = 1;
     function refreshHashViews(bytes) {
-      currentBytes = bytes;
+      // #1914: keep both the bookmark and section links on this byte size.
+      if (window.URLState) {
+        const newHash = URLState.updateHashParams({ bytes }, location.hash);
+        if (newHash !== location.hash) history.replaceState(null, '', newHash);
+        el.querySelectorAll('[data-hash-section]').forEach(link => {
+          link.href = URLState.updateHashParams({ section: link.dataset.hashSection }, newHash);
+        });
+      }
       hideMatrixTip();
       // Update selector button states
       document.querySelectorAll('.hash-byte-btn').forEach(b => {
@@ -1607,7 +1783,9 @@
       btn.addEventListener('click', () => refreshHashViews(Number(btn.dataset.bytes)));
     });
 
-    refreshHashViews(1);
+    // Read on every render so tab, filter and theme refreshes retain the view.
+    const urlBytes = new URLSearchParams(location.hash.split('?')[1] || '').get('bytes');
+    refreshHashViews(['1', '2', '3'].includes(urlBytes) ? Number(urlBytes) : 1);
   }
 
   function renderHashTimeline(hourly) {
@@ -2874,10 +3052,33 @@
   }
 
   async function renderDistanceTab(el) {
+    // A new render supersedes any retry still pending from an earlier one,
+    // so the two can never both write into the tab.
+    _stopDistanceRetry();
     try {
       const rqs = RegionFilter.regionQueryString();
       const sep = rqs ? '?' + rqs.slice(1) : '';
       const data = await api('/analytics/distance' + sep, { ttl: CLIENT_TTL.analyticsRF });
+
+      // #1997: the lazy index (#1011) answers 202 {status:"building"} with no
+      // summary until it has been built. Rendering that as data is what threw
+      // "Cannot read properties of undefined (reading 'totalHops')".
+      if (_distanceIsBuilding(data)) {
+        const secs = Math.round(_distanceRetryDelayMs(data) / 1000);
+        el.innerHTML = '<div class="text-center text-muted" id="distanceBuilding" style="padding:40px">' +
+          'Building the distance index…' +
+          '<div style="font-size:12px;margin-top:8px">This runs once per instance. Retrying in ' + secs + 's.</div></div>';
+        _distanceRetryTimer = setTimeout(function () {
+          _distanceRetryTimer = null;
+          // The user may have switched tabs or left while this was pending.
+          if (_currentTab !== 'distance') return;
+          const cur = document.getElementById('analyticsContent');
+          if (!cur) return;
+          renderDistanceTab(cur);
+        }, _distanceRetryDelayMs(data));
+        return;
+      }
+
       const s = data.summary;
       let html = `<div class="analytics-grid">
         <div class="stat-card"><div class="stat-value">${s.totalHops.toLocaleString()}</div><div class="stat-label">Total Hops Analyzed</div></div>
@@ -2909,7 +3110,7 @@
       }
 
       // Top hops leaderboard
-      html += `<div class="analytics-section"><h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-trophy"/></svg> Top 20 Longest Hops</h3><table class="data-table"><thead><tr><th scope="col">#</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Distance (${distUnitLabel})</th><th scope="col">Type</th><th scope="col">Obs</th><th scope="col">Best SNR</th><th scope="col">Median SNR</th><th scope="col">Packet</th><th scope="col"></th></tr></thead><tbody>`;
+      html += `<div class="analytics-section"><h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-trophy"/></svg> Top 20 Longest Hops</h3><table class="data-table"><thead><tr><th scope="col">#</th><th scope="col">From</th><th scope="col">To</th><th scope="col">Distance (${distUnitLabel})</th><th scope="col">Type</th><th scope="col">Obs</th><th scope="col">Best SNR</th><th scope="col">Median SNR</th><th scope="col">Packet</th><th scope="col" class="col-action"></th></tr></thead><tbody>`;
       const top20 = data.topHops.slice(0, 20);
       top20.forEach((h, i) => {
         const fromLink = h.fromPk ? `<a href="#/nodes/${encodeURIComponent(h.fromPk)}" class="analytics-link">${esc(h.fromName)}</a>` : esc(h.fromName || '?');
@@ -2920,13 +3121,13 @@
         const pktLink = h.hash ? `<a href="#/packet/${encodeURIComponent(h.hash)}" class="analytics-link mono" style="font-size:0.85em">${esc(h.hash.slice(0, 12))}…</a>` : '—';
         const mapBtn = h.fromPk && h.toPk ? `<button class="btn-icon dist-map-hop" data-from="${esc(h.fromPk)}" data-to="${esc(h.toPk)}" title="View on map" aria-label="View on map"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-map-trifold"/></svg></button>` : '';
         const tsTitle = h.timestamp ? `Best observation: ${h.timestamp}` : '';
-        html += `<tr title="${esc(tsTitle)}"><td>${i+1}</td><td>${fromLink}</td><td>${toLink}</td><td><strong>${formatDistance(h.dist)}</strong></td><td>${esc(h.type)}</td><td>${obs}</td><td>${bestSnr}</td><td>${medianSnr}</td><td>${pktLink}</td><td>${mapBtn}</td></tr>`;
+        html += `<tr title="${esc(tsTitle)}"><td>${i+1}</td><td>${fromLink}</td><td>${toLink}</td><td><strong>${formatDistance(h.dist)}</strong></td><td>${esc(h.type)}</td><td>${obs}</td><td>${bestSnr}</td><td>${medianSnr}</td><td>${pktLink}</td><td class="col-action">${mapBtn}</td></tr>`;
       });
       html += `</tbody></table></div>`;
 
       // Top paths
       if (data.topPaths.length) {
-        html += `<div class="analytics-section"><h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-path"/></svg> Top 10 Longest Multi-Hop Paths</h3><table class="data-table"><thead><tr><th scope="col">#</th><th scope="col">Total Distance (${distUnitLabel})</th><th scope="col">Hops</th><th scope="col">Route</th><th scope="col">Packet</th><th scope="col"></th></tr></thead><tbody>`;
+        html += `<div class="analytics-section"><h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-path"/></svg> Top 10 Longest Multi-Hop Paths</h3><table class="data-table"><thead><tr><th scope="col">#</th><th scope="col">Total Distance (${distUnitLabel})</th><th scope="col">Hops</th><th scope="col">Route</th><th scope="col">Packet</th><th scope="col" class="col-action"></th></tr></thead><tbody>`;
         data.topPaths.slice(0, 10).forEach((p, i) => {
           const route = p.hops.map(h => esc(h.fromName)).concat(esc(p.hops[p.hops.length-1].toName)).join(' → ');
           const pktLink = p.hash ? `<a href="#/packet/${encodeURIComponent(p.hash)}" class="analytics-link mono" style="font-size:0.85em">${esc(p.hash.slice(0, 12))}…</a>` : '—';
@@ -2935,7 +3136,7 @@
           p.hops.forEach(h => { if (h.fromPk && !pathPks.includes(h.fromPk)) pathPks.push(h.fromPk); });
           if (p.hops.length && p.hops[p.hops.length-1].toPk) { const last = p.hops[p.hops.length-1].toPk; if (!pathPks.includes(last)) pathPks.push(last); }
           const mapBtn = pathPks.length >= 2 ? `<button class="btn-icon dist-map-path" data-hops='${JSON.stringify(pathPks)}' title="View on map" aria-label="View on map"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-map-trifold"/></svg></button>` : '';
-          html += `<tr><td>${i+1}</td><td><strong>${formatDistance(p.totalDist)}</strong></td><td>${p.hopCount}</td><td style="font-size:0.9em">${route}</td><td>${pktLink}</td><td>${mapBtn}</td></tr>`;
+          html += `<tr><td>${i+1}</td><td><strong>${formatDistance(p.totalDist)}</strong></td><td>${p.hopCount}</td><td style="font-size:0.9em">${route}</td><td>${pktLink}</td><td class="col-action">${mapBtn}</td></tr>`;
         });
         html += `</tbody></table></div>`;
       }
@@ -2963,11 +3164,13 @@
     }
   }
 
-function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _analyticsData = {}; _channelData = null; if (_ngState && _ngState.animId) { cancelAnimationFrame(_ngState.animId); } _ngState = null; if (_themeRefreshHandler) { window.removeEventListener('theme-refresh', _themeRefreshHandler); _themeRefreshHandler = null; } }
+function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _stopDistanceRetry(); _analyticsData = {}; _channelData = null; if (_ngState && _ngState.animId) { cancelAnimationFrame(_ngState.animId); } _ngState = null; if (_themeRefreshHandler) { window.removeEventListener('theme-refresh', _themeRefreshHandler); _themeRefreshHandler = null; } }
 
   // Expose for testing
   if (typeof window !== 'undefined') {
-    window._analyticsDecorateChannels = decorateAnalyticsChannels;
+    window._distanceIsBuilding = _distanceIsBuilding;
+  window._distanceRetryDelayMs = _distanceRetryDelayMs;
+  window._analyticsDecorateChannels = decorateAnalyticsChannels;
     window._analyticsSortChannels = sortChannels;
     window._analyticsLoadChannelSort = loadChannelSort;
     window._analyticsSaveChannelSort = saveChannelSort;
@@ -2978,6 +3181,9 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _analyticsData =
     window._analyticsRenderMultiByteAdopters = renderMultiByteAdopters;
     window._analyticsHashStatCardsHtml = hashStatCardsHtml;
     window._analyticsRenderCollisionsFromServer = renderCollisionsFromServer;
+    window._analyticsRetransmissionBucketFor = retransmissionBucketFor;
+    window._analyticsRenderRetransmissionChart = renderRetransmissionChart;
+    window._analyticsScopeAdvertsByRoleHtml = scopeAdvertsByRoleHtml;
   }
 
   // ─── Neighbor Graph Tab ─────────────────────────────────────────────────────
@@ -4113,13 +4319,13 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _analyticsData =
           else if (obs.current_noise_floor >= -100) nfClass = 'rf-nf-warning';
         }
 
-        return `<div class="rf-cell${isSelected ? ' rf-cell-selected' : ''}" data-observer="${obs.observer_id}" tabindex="0" role="button" aria-label="Observer ${esc(name)}, noise floor ${nf} dBm">
+        return `<div class="rf-cell${isSelected ? ' rf-cell-selected' : ''}" data-observer="${esc(obs.observer_id)}" tabindex="0" role="button" aria-label="Observer ${esc(name)}, noise floor ${nf} dBm">
           <div class="rf-cell-header">
             <span class="rf-cell-name">${esc(name)}</span>
             <span class="rf-cell-nf ${nfClass}">${nf} dBm</span>
             ${batt ? `<span class="rf-cell-batt">${batt}</span>` : ''}
           </div>
-          <div class="rf-cell-sparkline" id="rf-spark-${obs.observer_id}"></div>
+          <div class="rf-cell-sparkline" id="rf-spark-${esc(obs.observer_id)}"></div>
           <div class="rf-cell-stats">
             <span>avg: ${avgNf}</span>
             <span>max: ${maxNf}</span>
@@ -4746,6 +4952,33 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _analyticsData =
   }
 
   // ===================== SCOPES =====================
+  // #1979: flood adverts by sender role, split by scope state. Descriptive
+  // only: it shows what each role sent, not why.
+  function scopeAdvertsByRoleHtml(rows) {
+    var html = '<h4 style="margin:16px 0 4px">Flood adverts by node role</h4>' +
+      '<p class="text-muted" style="margin:0 0 8px;font-size:0.85em">' +
+        'Flood adverts (routes 0 and 1) in this window, grouped by the sender\'s role. ' +
+        'Shares are of the row. Unknown scope means scoped, but this instance could not name the region. ' +
+        'This shows what each role sent; it does not show why.' +
+      '</p>';
+    if (!rows || !rows.length) {
+      return html + '<p class="text-muted" style="font-size:0.85em;margin:0">No flood adverts in this window.</p>';
+    }
+    return html +
+      '<table class="data-table analytics-table">' +
+        '<thead><tr><th>Role</th><th>Adverts</th><th>Unscoped</th><th>Unknown scope</th><th>Named scope</th></tr></thead>' +
+        '<tbody>' + rows.map(function(r) {
+          var total = r.unscoped + r.unknownScope + r.named;
+          function cell(n) {
+            return '<td>' + n.toLocaleString() + ' <span class="text-muted">(' + (n / total * 100).toFixed(1) + '%)</span></td>';
+          }
+          return '<tr data-role="' + esc(r.role) + '"><td>' + esc(r.role) + '</td>' +
+            '<td>' + total.toLocaleString() + '</td>' +
+            cell(r.unscoped) + cell(r.unknownScope) + cell(r.named) + '</tr>';
+        }).join('') + '</tbody>' +
+      '</table>';
+  }
+
   async function renderScopesTab(el) {
     var winKey = 'scopes_window';
     var selectedWindow = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(winKey)) || '24h';
@@ -4768,7 +5001,8 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _analyticsData =
           '<thead><tr><th>Region</th><th>Messages</th><th>% of Scoped</th></tr></thead>' +
           '<tbody id="scopes-tbody"></tbody>' +
         '</table>' +
-        '<div id="scopes-chart"></div>';
+        '<div id="scopes-chart"></div>' +
+        '<div id="scopes-adverts-by-role"></div>';
 
       // Attach window-button click listeners (once)
       el.querySelectorAll('[data-win]').forEach(function(btn) {
@@ -4897,6 +5131,9 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _analyticsData =
         }
         chartEl.innerHTML = chartHtml;
       }
+
+      var advertsEl = document.getElementById('scopes-adverts-by-role');
+      if (advertsEl) advertsEl.innerHTML = scopeAdvertsByRoleHtml(d.advertsByRole);
     }
 
     load(selectedWindow);

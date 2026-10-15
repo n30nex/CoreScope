@@ -2,6 +2,65 @@
 
 ## [Unreleased]
 
+## [3.14.0] - 2026-10-08
+
+See [docs/release-notes/v3.14.0.md](docs/release-notes/v3.14.0.md) for the full notes. 23 commits since v3.13.1: 13 fix, 8 feat, 1 ci, 1 docs.
+
+### Highlights
+- **Optional user accounts, off by default** (#2129, #2130, #2138 to #2141) - accounts and roles, settings sync across devices, an admin area with an audit log, hashtag channel proposals with admin approval, mail notifications for watched nodes, data export and daily `users.db` backups. Setup: `docs/user-guide/accounts.md`.
+- **New limits on unauthenticated endpoints** (#2119, #2120, #2122, #2123, #2127) - requests above them now get 400 or 429 instead of an answer. **Operator awareness required** for API clients that send long `nodes=` lists.
+- **`traffic_share_score` drops after the upgrade and no longer drifts with uptime** (#2117).
+- **Regional `/api/nodes` queries no longer exhaust the database pool** (#2114, #2115) - 154.8 s to 37 ms for an uncached region set.
+
+No manual migration step. With user management off, no new file or table is created.
+
+## [3.13.1] - 2026-10-04
+
+See [docs/release-notes/v3.13.1.md](docs/release-notes/v3.13.1.md) for the full notes. 1 commit since v3.13.0: 1 fix.
+
+### Highlights
+- **Node-discover replies count as coverage** (#2111) - a CoreDrive RX companion's discover replies were dropped from `client_receptions`, so the coverage page showed nothing for them. On a deployment that has had the fix since August they are 44% of coverage rows over 7 days. Replies received before the upgrade are not recovered.
+
+No manual migration step, no configuration change.
+
+## [3.13.0] - 2026-10-04
+
+See [docs/release-notes/v3.13.0.md](docs/release-notes/v3.13.0.md) for the full notes. 16 commits since v3.12.0: 10 fix, 4 test, 2 feat.
+
+### Highlights
+- **The first start backfills advert route evidence in the background, and flood counts read low until it finishes** (#2088) - measured at 24m 1s on 16.8M observations and 36m 23s on 16.5M on a busier host. Startup and ingest do not wait for it. Runs once per database and resumes after a restart. **Operator awareness required.**
+- **Adverts are split by the route they arrived on** (#2088, #2085) - flood, direct with an empty path, or mixed, in Analytics and on node detail.
+- **Path hops are resolved with the observer that heard them** (#2099) - with one per-path warning in the packets list when hops stay ambiguous.
+- **A compact packets table with a Full Names toggle** (#2090).
+- **Channel unread counts and key-only channels survive a list refresh** (#2096).
+
+No manual migration step: `advert_route_evidence` is created at boot.
+
+## [3.12.0] - 2026-09-26
+
+See [docs/release-notes/v3.12.0.md](docs/release-notes/v3.12.0.md) for the full notes. 29 commits since v3.11.0: 15 fix, 5 test, 3 perf, 3 feat, 2 ci, 1 chore.
+
+### Highlights
+- **The first start after this release runs `ANALYZE`, and ingest stalls while it does** (#2058) - measured at 3m43.9s on a 9.4 GB database, once per database, buffered with nothing dropped. It buys 25% fewer pages read on the region-filtered channel query (143,442 to 107,429). Set `db.analysisLimit` negative to skip it. **Operator awareness required**, and worth picking the moment on a busy instance.
+- **`maxMemoryMB` eviction actually triggers** (#2035) - path, decode-cache and dedup-key bytes were unaccounted, so the measured footprint stayed under the configured limit and eviction never fired. Instances relying on that limit will evict where they previously grew.
+- **Reception is attributed more honestly** (#2057, #2063, #2064) - zero-hop adverts count as direct reception, Heard By lists only observers that heard the node on air, and its empty state no longer claims the node is out of range.
+- **Each observation carries its own wire bytes** (#1999) - the packet detail API handed every observation the same canonical frame.
+- **CoreDrive RX region answers are stored** (#2047) - `node_declared_regions` was read but created by nothing, so the Scope Audit described a source that never arrived. Opt-in through `clientRegions`, kept with position, repeater clock and per-collector history.
+- **Eight E2E suites had no runner at all** (#2045, #2053) - the aggregate reported a pass while skipping them.
+
+No manual migration step: `node_declared_regions` (#2047) and `sqlite_stat1` (#2058) are both created at boot.
+
+## [3.11.0] - 2026-09-16
+
+Released and deployed, but it never received a changelog entry at the time; this one is written after the fact and there is no `docs/release-notes/v3.11.0.md`. 52 commits since v3.10.1: 27 fix, 16 feat, 4 test, 2 perf.
+
+### Highlights
+- **Network-wide Scope Audit page** (#1976), with declared-region verification against a repeater's own traffic (#1990), unnameable-traffic accounting (#1987), and opt-in region keys derived from what nodes declare (#1989).
+- **SQLite driver swapped** from `modernc.org/sqlite` to `mattn/go-sqlite3`, cross-built with zig (#1992). This makes the build cgo-dependent.
+- **Map colours and filters repeaters by scope-configuration state** (#2006), and filters repeaters by region name (#1862).
+- Analytics additions: retransmission pressure over time (#1699), scope adverts by node role (#1979), per-node hop-count statistics (#1812).
+- The scope-match tally survives ingestor restarts (#2002).
+
 ## [3.10.1] - 2026-09-04
 
 v3.10.0 was tagged and withdrawn before any container image or release asset was published; nothing was ever available under that number. Same release, next number.

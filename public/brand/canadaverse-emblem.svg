@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Canadaverse logo">
+
+  <defs>
+    <linearGradient id="aurora" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#20E0C2"/>
+      <stop offset="52%" stop-color="#50B7FF"/>
+      <stop offset="100%" stop-color="#8D5CFF"/>
+    </linearGradient>
+    <linearGradient id="maple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF5A60"/>
+      <stop offset="100%" stop-color="#B91528"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="220" fill="#071526"/>
+
+  <circle cx="512" cy="512" r="376" fill="none" stroke="url(#aurora)" stroke-width="34" opacity=".95"/>
+  <circle cx="512" cy="512" r="310" fill="#0B2740" stroke="#123B5B" stroke-width="10"/>
+  <path d="M251 650 C335 560 398 529 512 530 C626 529 689 560 773 650" fill="none" stroke="#20E0C2" stroke-width="18" stroke-linecap="round" opacity=".72"/>
+  <path d="M512 197 l38 90 88-40-43 86 96 18-92 38 60 76-103-15-12 100-32-93-32 93-12-100-103 15 60-76-92-38 96-18-43-86 88 40z" fill="url(#maple)" opacity=".96"/>
+  <g filter="url(#glow)" stroke="#50B7FF" stroke-width="12" stroke-linecap="round" opacity=".9">
+    <path d="M326 675 L448 573 L575 573 L698 675" fill="none"/>
+    <path d="M448 573 L512 687 L575 573" fill="none"/>
+  </g>
+  <g fill="#E0343F" stroke="#F3F0E8" stroke-width="10">
+    <circle cx="379" cy="653" r="86"/>
+    <circle cx="645" cy="653" r="86"/>
+    <ellipse cx="512" cy="662" rx="155" ry="117"/>
+  </g>
+  <g fill="#071526">
+    <circle cx="464" cy="624" r="18"/><circle cx="560" cy="624" r="18"/>
+  </g>
+  <path d="M456 686 Q512 726 568 686" fill="none" stroke="#071526" stroke-width="14" stroke-linecap="round"/>
+  <g fill="#F3F0E8" stroke="#071526" stroke-width="8">
+    <circle cx="326" cy="675" r="22"/><circle cx="448" cy="573" r="18"/><circle cx="575" cy="573" r="18"/><circle cx="698" cy="675" r="22"/><circle cx="512" cy="687" r="18"/>
+  </g>
+
+</svg>

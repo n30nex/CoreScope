@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -224,16 +225,24 @@ func sortedCoverageNodes(m map[string]*covNodeAgg) (nodes []CoverageNode, trunca
 type bbox struct{ MinLat, MinLon, MaxLat, MaxLon float64 }
 
 // coverageHeardKeyCandidates returns the exact heard_key values that identify a
-// node: its full pubkey (stored with heard_keylen 32) and the 2-byte (4 hex) and
-// 3-byte (6 hex) prefixes a relay logs. Matching heard_key IN (these) is
+// node: its full pubkey (stored with heard_keylen 32), the 8-byte (16 hex) prefix
+// a node-discover response carries, and the 2-byte (4 hex) and 3-byte (6 hex)
+// prefixes a relay logs.
+//
+// The 16-hex entry is load-bearing, not defensive: corescope-rx asks for
+// DISCOVER_PREFIX_ONLY (src/app.js sends CTRL_NODE_DISCOVER_REQ|0x01 to save 24
+// bytes of airtime per reply), and the firmware then answers with 6+8 bytes
+// (simple_repeater/MyMesh.cpp:799-805). So essentially EVERY discover-attributed
+// reception is an 8-byte key; without this candidate they are stored and then
+// never matched by any per-node coverage query. Matching heard_key IN (these) is
 // equivalent to the old "heard_keylen=32 AND heard_key=? OR heard_keylen IN (2,3)
 // AND substr(?,1,keylen*2)=heard_key", but sargable — so the (heard_key, …)
 // composite index seeks the few matching rows instead of scanning the bbox (#5).
 func coverageHeardKeyCandidates(pubkey string) []string {
 	pk := strings.ToLower(pubkey)
 	seen := map[string]bool{}
-	out := make([]string, 0, 3)
-	for _, c := range []string{pk, prefixOrEmpty(pk, 6), prefixOrEmpty(pk, 4)} {
+	out := make([]string, 0, 4)
+	for _, c := range []string{pk, prefixOrEmpty(pk, 16), prefixOrEmpty(pk, 6), prefixOrEmpty(pk, 4)} {
 		if c != "" && !seen[c] {
 			seen[c] = true
 			out = append(out, c)
@@ -249,12 +258,18 @@ func prefixOrEmpty(s string, n int) string {
 	return ""
 }
 
-// sqlPlaceholders returns "?,?,…" with n placeholders (n >= 1).
-func sqlPlaceholders(n int) string {
-	if n <= 1 {
-		return "?"
+// sqlPlaceholders builds native PostgreSQL positional parameters for an IN-list.
+// The optional first index supports lists following other bound predicates.
+func (db *DB) sqlPlaceholders(n int, first ...int) string {
+	start := 1
+	if len(first) > 0 {
+		start = first[0]
 	}
-	return strings.Repeat("?,", n-1) + "?"
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = fmt.Sprintf("%s", db.parameter(start+i))
+	}
+	return strings.Join(parts, ",")
 }
 
 // queryCoverageRows returns raw coverage rows where the directly-heard node
@@ -267,11 +282,14 @@ func (s *Server) queryCoverageRows(pubkey string, b bbox) ([]coverageRow, error)
 		args = append(args, c)
 	}
 	args = append(args, b.MinLat, b.MaxLat, b.MinLon, b.MaxLon)
+	// A cached generic plan can treat a wide bbox as selective and scan the
+	// entire geo index before filtering the heard key. Plan this SELECT with
+	// its actual bounds; Exec still uses server-bound extended-protocol values.
 	rows, err := s.db.conn.Query(`
 		SELECT lat, lon, snr, rssi, heard_key, rx_at
 		FROM client_receptions
-		WHERE heard_key IN (`+sqlPlaceholders(len(cands))+`)
-		  AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?`, args...)
+		WHERE heard_key IN (`+s.db.sqlPlaceholders(len(cands))+`)
+		  AND lat BETWEEN `+fmt.Sprintf("%s AND %s AND lon BETWEEN %s AND %s", s.db.parameter(len(cands)+1), s.db.parameter(len(cands)+2), s.db.parameter(len(cands)+3), s.db.parameter(len(cands)+4)), s.db.planWithValues(args)...)
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +310,7 @@ func (s *Server) mobileRxStats(pubkey string) (count, clients int) {
 	}
 	s.db.conn.QueryRow(`
 		SELECT COUNT(*), COUNT(DISTINCT rx_pubkey) FROM client_receptions
-		WHERE heard_key IN (`+sqlPlaceholders(len(cands))+`)`, args...).Scan(&count, &clients)
+		WHERE heard_key IN (`+s.db.sqlPlaceholders(len(cands))+`)`, args...).Scan(&count, &clients)
 	return count, clients
 }
 

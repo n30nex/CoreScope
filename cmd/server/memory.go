@@ -32,9 +32,10 @@ import (
 // eviction; both can shrink when packets age out. goHeapInuseMB and goSysMB
 // fluctuate with GC.
 //
-// cgoBytesMB intentionally absent: this build uses the pure-Go
-// modernc.org/sqlite driver, so there is no cgo allocator to measure.
-// Reintroduce only if we ever switch back to mattn/go-sqlite3.
+// These are server-process measurements. PostgreSQL buffers and query work
+// memory live in the database process and must be measured separately.
+// processRSSMB - goSysMB is not an allocation counter: goSysMB includes address
+// space reserved but not resident, so that subtraction can be negative.
 type MemorySnapshot struct {
 	ProcessRSSMB  float64 `json:"processRSSMB"`
 	GoHeapInuseMB float64 `json:"goHeapInuseMB"`

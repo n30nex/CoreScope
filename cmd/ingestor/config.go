@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/meshcore-analyzer/dbconfig"
 	"github.com/meshcore-analyzer/geofilter"
@@ -25,6 +26,8 @@ type MQTTSource struct {
 	IATAFilter         []string `json:"iataFilter,omitempty"`
 	ConnectTimeoutSec  int      `json:"connectTimeoutSec,omitempty"`
 	Region             string   `json:"region,omitempty"`
+	// ClientID is the MQTT ClientID; empty means corescope-<name>-<random>.
+	ClientID string `json:"clientId,omitempty"`
 }
 
 // ConnectTimeoutOrDefault returns the per-source connect timeout in seconds,
@@ -42,8 +45,10 @@ type MQTTLegacy struct {
 	Topic  string `json:"topic"`
 }
 
-// Config holds the ingestor configuration, compatible with the Node.js config.json format.
+// Config holds the shared Go-service configuration and ingestor-only settings.
 type Config struct {
+	DatabaseURL          string                      `json:"databaseURL"`
+	StateDir             string                      `json:"stateDir"`
 	DBPath               string                      `json:"dbPath"`
 	MQTT                 *MQTTLegacy                 `json:"mqtt,omitempty"`
 	MQTTSources          []MQTTSource                `json:"mqttSources,omitempty"`
@@ -52,12 +57,14 @@ type Config struct {
 	ChannelKeys          map[string]string           `json:"channelKeys,omitempty"`
 	HashChannels         []string                    `json:"hashChannels,omitempty"`
 	HashRegions          []string                    `json:"hashRegions,omitempty"`
+	AutoRegionKeys       *AutoRegionKeysConfig       `json:"autoRegionKeys,omitempty"`
 	Retention            *RetentionConfig            `json:"retention,omitempty"`
 	Metrics              *MetricsConfig              `json:"metrics,omitempty"`
 	Runtime              *RuntimeConfig              `json:"runtime,omitempty"`
 	ClientRxCoverage     *ClientRxCoverageConfig     `json:"clientRxCoverage,omitempty"`
 	ClientRxObservations *ClientRxObservationsConfig `json:"clientRxObservations,omitempty"`
 	ClientRfSamples      *ClientRfSamplesConfig      `json:"clientRfSamples,omitempty"`
+	ClientRegions        *ClientRegionsConfig        `json:"clientRegions,omitempty"`
 	GeoFilter            *GeoFilterConfig            `json:"geo_filter,omitempty"`
 	// PathTrust configures the minimum path-hash prefix length trusted as
 	// mapping/topology evidence (issue #1784).
@@ -76,6 +83,17 @@ type Config struct {
 	obsIATAWhitelistCached map[string]bool
 	obsIATAWhitelistOnce   sync.Once
 
+	// IATAWarnIntervalSec throttles the one-line-per-region warning emitted when
+	// ObserverIATAWhitelist rejects a region. 0 => defaultIATAWarnIntervalSec.
+	IATAWarnIntervalSec int `json:"iataWarnIntervalSec,omitempty"`
+
+	// iataWarnLast tracks when each dropped region was last logged.
+	iataWarnMu   sync.Mutex
+	iataWarnLast map[string]time.Time
+	// iataWarnOverflowLast throttles the shared warning used once
+	// iataWarnLast has reached iataWarnMaxTracked.
+	iataWarnOverflowLast time.Time
+
 	// ObserverBlacklist is a list of observer public keys to drop at ingest.
 	// Messages from blacklisted observers are silently discarded â€” no DB writes,
 	// no UpsertObserver, no observations, no metrics.
@@ -90,10 +108,15 @@ type Config struct {
 	NeighborEdgesMaxAgeDays int `json:"neighborEdgesMaxAgeDays,omitempty"`
 
 	// IngestBufferSize caps the in-memory queue (number of MQTT messages) held
-	// while the single SQLite writer is blocked by startup migrations/prunes
+	// while the single serialized writer is blocked by startup migrations/prunes
 	// (#1608). Received messages are drained once the write path is ready.
 	// 0 / unset => default. Bounded memory.
 	IngestBufferSize int `json:"ingestBufferSize,omitempty"`
+
+	// UserManagement is the part of the shared userManagement block the
+	// ingestor reads: where users.db is and whether approved hashtag channels
+	// are decrypted. Everything else in the block belongs to the server.
+	UserManagement *UserManagementConfig `json:"userManagement,omitempty"`
 }
 
 // NeighborEdgesDaysOrDefault returns the configured pruning window or 5.
@@ -173,6 +196,17 @@ func (c *Config) ClientRfSamplesEnabled() bool {
 	return c.ClientRfSamples != nil && c.ClientRfSamples.Enabled
 }
 
+// ClientRegionsConfig controls the opt-in region-discovery answer stream.
+type ClientRegionsConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
+// ClientRegionsEnabled reports whether declared-region answers are recorded.
+// Default false.
+func (c *Config) ClientRegionsEnabled() bool {
+	return c.ClientRegions != nil && c.ClientRegions.Enabled
+}
+
 // RetentionConfig controls how long stale nodes are kept before being moved to inactive_nodes.
 type RetentionConfig struct {
 	NodeDays     int `json:"nodeDays"`
@@ -199,6 +233,11 @@ type RetentionConfig struct {
 	// client_rf_samples table; 0 disables. Bounds the table the opt-in RF
 	// sample stream would otherwise grow without limit.
 	ClientRfDays int `json:"clientRfDays"`
+	// ClientRegionsDays is the retention window (by observed_at) for the
+	// node_declared_regions table; 0 disables. Bounds the table the opt-in
+	// region-discovery stream would otherwise grow without limit. Consumed by
+	// Task 6's pruner.
+	ClientRegionsDays int `json:"clientRegionsDays"`
 }
 
 // PacketDaysOrZero returns the configured retention.packetDays or 0
@@ -244,6 +283,15 @@ func (c *Config) ClientRfDaysOrZero() int {
 	return 0
 }
 
+// ClientRegionsDaysOrZero returns retention.clientRegionsDays or 0
+// (disabled) if not set.
+func (c *Config) ClientRegionsDaysOrZero() int {
+	if c.Retention != nil && c.Retention.ClientRegionsDays > 0 {
+		return c.Retention.ClientRegionsDays
+	}
+	return 0
+}
+
 // MetricsConfig controls observer metrics collection.
 type MetricsConfig struct {
 	SampleIntervalSec int `json:"sampleIntervalSec"`
@@ -258,15 +306,24 @@ type RuntimeConfig struct {
 	MaxMemoryMB int `json:"maxMemoryMB"`
 }
 
-// DBConfig is the shared SQLite vacuum/maintenance config (#919, #921).
+// DBConfig shares startup-load settings and accepts obsolete SQLite config keys.
 type DBConfig = dbconfig.DBConfig
 
-// IncrementalVacuumPages returns the configured pages per vacuum or 1024 default.
+// IncrementalVacuumPages preserves legacy config decoding; PostgreSQL does not use it.
 func (c *Config) IncrementalVacuumPages() int {
 	if c.DB != nil && c.DB.IncrementalVacuumPages > 0 {
 		return c.DB.IncrementalVacuumPages
 	}
 	return 1024
+}
+
+// AnalysisLimit preserves the old SQLite setting for configuration compatibility.
+// PostgreSQL owns planner statistics; runtime maintenance does not use this limit.
+func (c *Config) AnalysisLimit() int {
+	if c.DB != nil && c.DB.AnalysisLimit != 0 {
+		return c.DB.AnalysisLimit
+	}
+	return 10000
 }
 
 // ShouldValidateSignatures returns true (default) unless explicitly disabled.
@@ -356,6 +413,92 @@ func (c *Config) IsObserverIATAAllowed(iata string) bool {
 	return c.obsIATAWhitelistCached[strings.ToUpper(strings.TrimSpace(iata))]
 }
 
+// iataWarnMaxTracked bounds the per-region throttle map. The key is
+// publisher-controlled, so it cannot be allowed to grow with traffic. 512 is
+// far above any real deployment's region count (the reference instance has 43
+// observers across a handful of regions) and small enough that a hostile feed
+// buys nothing: the map stops growing and the warning keeps coming.
+const iataWarnMaxTracked = 512
+
+// defaultIATAWarnIntervalSec is the re-log interval for whitelist drops (6h).
+const defaultIATAWarnIntervalSec = 21600
+
+// IATAWarnInterval returns how often a dropped region is re-logged.
+func (c *Config) IATAWarnInterval() time.Duration {
+	if c == nil || c.IATAWarnIntervalSec <= 0 {
+		return defaultIATAWarnIntervalSec * time.Second
+	}
+	return time.Duration(c.IATAWarnIntervalSec) * time.Second
+}
+
+// ShouldWarnIATADrop reports whether a whitelist drop for this region should be
+// logged now, recording the decision when it returns true.
+//
+// Logging every dropped message is not an option: a foreign feed runs to
+// thousands of messages a day and would flood the container log. But dropping
+// in silence is worse — an allow-list fails in the dangerous direction, where a
+// legitimate but unlisted region simply vanishes with nothing to show for it.
+// So: one line per region, re-logged at most every IATAWarnInterval for as long
+// as that region keeps arriving. The re-log is deliberate — a strict log-once
+// would emit a single edge event that any scrape window eventually rolls past,
+// leaving an actively-dropping region looking identical to a healthy one.
+func (c *Config) ShouldWarnIATADrop(iata string) bool {
+	if c == nil {
+		return false
+	}
+	code := strings.ToUpper(strings.TrimSpace(iata))
+	if code == "" {
+		return false
+	}
+	interval := c.IATAWarnInterval()
+	now := time.Now()
+
+	c.iataWarnMu.Lock()
+	defer c.iataWarnMu.Unlock()
+	if last, ok := c.iataWarnLast[code]; ok && now.Sub(last) < interval {
+		return false
+	}
+	if c.iataWarnLast == nil {
+		c.iataWarnLast = make(map[string]time.Time)
+	}
+	// The key comes from a topic segment the publisher controls, so an
+	// unbounded map here is a remote memory sink: 200k distinct codes retained
+	// 200k entries and 15.1 MB of heap when this was measured. Nothing in the
+	// codebase constrains an IATA code's shape (it is uppercased and trimmed,
+	// never validated), so rejecting by shape would invent a rule operators
+	// have not agreed to. Bound the map instead.
+	//
+	// Past the cap the drop is still logged, throttled on one shared timestamp
+	// rather than a per-code one. That keeps the flood-protection the feature
+	// exists for while making the overflow itself visible: silently dropping
+	// the warning would reintroduce the bug this PR fixes, one level up.
+	if len(c.iataWarnLast) >= iataWarnMaxTracked {
+		// Sweep first. An entry older than the interval holds nothing back:
+		// the code would be re-logged on its next sighting anyway, so dropping
+		// it changes no behaviour and frees the slot. Without this the first
+		// iataWarnMaxTracked codes ever seen own the map forever, and a
+		// legitimate region that starts arriving later is stuck sharing the
+		// overflow throttle with whatever transient junk got there first.
+		// Only runs at the cap, so the normal path pays nothing.
+		for k, t := range c.iataWarnLast {
+			if now.Sub(t) >= interval {
+				delete(c.iataWarnLast, k)
+			}
+		}
+	}
+	if len(c.iataWarnLast) >= iataWarnMaxTracked {
+		if _, known := c.iataWarnLast[code]; !known {
+			if now.Sub(c.iataWarnOverflowLast) < interval {
+				return false
+			}
+			c.iataWarnOverflowLast = now
+			return true
+		}
+	}
+	c.iataWarnLast[code] = now
+	return true
+}
+
 // LoadConfig reads configuration from a JSON file, with env var overrides.
 // If the config file does not exist, sensible defaults are used (zero-config startup).
 func LoadConfig(path string) (*Config, error) {
@@ -391,10 +534,23 @@ func LoadConfig(path string) (*Config, error) {
 		}}
 	}
 
-	// Default DB path
-	if cfg.DBPath == "" {
-		cfg.DBPath = "data/meshcore.db"
+	if v := os.Getenv("CORESCOPE_DATABASE_URL"); v != "" {
+		cfg.DatabaseURL = v
 	}
+	if v := os.Getenv("CORESCOPE_WRITER_DATABASE_URL"); v != "" {
+		cfg.DatabaseURL = v
+	}
+	if v := os.Getenv("CORESCOPE_STATE_DIR"); v != "" {
+		cfg.StateDir = v
+	}
+	if v := os.Getenv("CORESCOPE_APPROVED_CHANNELS_DATABASE_URL"); v != "" {
+		if cfg.UserManagement == nil {
+			cfg.UserManagement = &UserManagementConfig{}
+		}
+		cfg.UserManagement.ApprovedChannelsDatabaseURL = v
+	}
+	// Legacy DBPath is never interpreted as a connection string.
+	// Default DB path
 
 	// Normalize: convert legacy single mqtt config to mqttSources
 	if len(cfg.MQTTSources) == 0 && cfg.MQTT != nil && cfg.MQTT.Broker != "" {
@@ -439,4 +595,102 @@ func (c *Config) ResolvedSources() []MQTTSource {
 		// connections natively via gorilla/websocket.
 	}
 	return c.MQTTSources
+}
+
+// AutoRegionKeysConfig controls the opt-in derivation of region keys from the
+// names repeaters declare over RF (node_declared_regions), on top of the
+// explicit hashRegions list.
+//
+// TOP-LEVEL BLOCK, a sibling of hashRegions — not nested inside it. Config
+// loading is plain json.Unmarshal with no DisallowUnknownFields, so a
+// mis-nested key is silently ignored and derivation stays off with no error,
+// the same trap clientRxObservations documents.
+type AutoRegionKeysConfig struct {
+	Enabled        bool `json:"enabled"`
+	MaxDerived     int  `json:"maxDerived"`
+	RefreshMinutes int  `json:"refreshMinutes"`
+}
+
+// autoRegionKeysDefaultMaxDerived bounds the derived tier. Every added key
+// raises the random ambiguity rate by 1/65536 per scoped packet (code1 is two
+// bytes) and costs one more HMAC per transport-scoped packet — the match is
+// O(keys) and cannot be indexed, because the code depends on the payload. 256
+// on top of a typical explicit set puts the ambiguity rate near 0.5%, which is
+// the ceiling this design accepts.
+const autoRegionKeysDefaultMaxDerived = 256
+
+// autoRegionKeysDefaultRefreshMinutes is how often the derived tier is rebuilt
+// from the database. Declared-region answers arrive at human pace (a drive-by
+// with a companion app, or a 24h observer report), so minutes-scale staleness
+// is irrelevant and a tighter interval only burns queries.
+const autoRegionKeysDefaultRefreshMinutes = 15
+
+// UserManagementConfig is the ingestor's view of userManagement.
+type UserManagementConfig struct {
+	DatabaseURL                 string                  `json:"databaseURL,omitempty"`
+	Enabled                     bool                    `json:"enabled"`
+	ApprovedChannelsDatabaseURL string                  `json:"approvedChannelsDatabaseURL,omitempty"`
+	DBPath                      string                  `json:"dbPath,omitempty"`
+	ChannelProposals            *ChannelProposalsConfig `json:"channelProposals,omitempty"`
+}
+
+// ChannelProposalsConfig is the ingestor's view of
+// userManagement.channelProposals.
+type ChannelProposalsConfig struct {
+	Enabled     bool `json:"enabled"`
+	MaxApproved int  `json:"maxApproved,omitempty"`
+}
+
+const defaultMaxApprovedChannels = 128
+
+// ApprovedChannelsEnabled reports whether approved hashtag channels from
+// users.db are decrypted: user management and channel proposals both on.
+func (c *Config) ApprovedChannelsEnabled() bool {
+	u := c.UserManagement
+	return u != nil && u.Enabled && u.ChannelProposals != nil && u.ChannelProposals.Enabled
+}
+
+// ApprovedChannelsMax caps the approved keys read from users.db; absent,
+// zero or negative means the default, as on the server.
+func (c *Config) ApprovedChannelsMax() int {
+	u := c.UserManagement
+	if u == nil || u.ChannelProposals == nil || u.ChannelProposals.MaxApproved <= 0 {
+		return defaultMaxApprovedChannels
+	}
+	return u.ChannelProposals.MaxApproved
+}
+
+// ApprovedChannelsURL is a separate restricted account-reader credential.
+func (c *Config) ApprovedChannelsURL() string {
+	if c.UserManagement == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.UserManagement.ApprovedChannelsDatabaseURL)
+}
+
+// AutoRegionKeysEnabled reports whether region keys may be derived from
+// declared-region answers. Default false.
+func (c *Config) AutoRegionKeysEnabled() bool {
+	return c.AutoRegionKeys != nil && c.AutoRegionKeys.Enabled
+}
+
+// AutoRegionKeysMaxDerived returns the derived-tier cap, falling back to the
+// default for absent, zero, or negative values — a zero is indistinguishable
+// from "key omitted" after json.Unmarshal, and neither should silently mean
+// "derive nothing" when the operator has switched the feature on.
+func (c *Config) AutoRegionKeysMaxDerived() int {
+	if c.AutoRegionKeys == nil || c.AutoRegionKeys.MaxDerived <= 0 {
+		return autoRegionKeysDefaultMaxDerived
+	}
+	return c.AutoRegionKeys.MaxDerived
+}
+
+// AutoRegionKeysRefreshMinutes returns the refresh interval in minutes,
+// falling back to the default for absent, zero, or negative values — a zero
+// here would otherwise panic time.NewTicker.
+func (c *Config) AutoRegionKeysRefreshMinutes() int {
+	if c.AutoRegionKeys == nil || c.AutoRegionKeys.RefreshMinutes <= 0 {
+		return autoRegionKeysDefaultRefreshMinutes
+	}
+	return c.AutoRegionKeys.RefreshMinutes
 }

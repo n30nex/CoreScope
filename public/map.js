@@ -9,7 +9,7 @@
   let nodes = [];
   let targetNodeKey = null;
   let observers = [];
-  let filters = { repeater: true, companion: true, room: true, sensor: true, observer: true, lastHeard: '30d', neighbors: false, clustering: localStorage.getItem('meshcore-map-clustering') !== 'false', hashLabels: localStorage.getItem('meshcore-map-hash-labels') !== 'false', statusFilter: localStorage.getItem('meshcore-map-status-filter') || 'all', byteSize: localStorage.getItem('meshcore-map-byte-filter') || 'all', multiByteOverlay: localStorage.getItem('meshcore-map-multibyte-overlay') === 'true' };
+  let filters = { repeater: true, companion: true, room: true, sensor: true, observer: true, lastHeard: '30d', neighbors: false, clustering: localStorage.getItem('meshcore-map-clustering') !== 'false', hashLabels: localStorage.getItem('meshcore-map-hash-labels') !== 'false', statusFilter: localStorage.getItem('meshcore-map-status-filter') || 'all', byteSize: localStorage.getItem('meshcore-map-byte-filter') || 'all', multiByteOverlay: localStorage.getItem('meshcore-map-multibyte-overlay') === 'true', scopeState: localStorage.getItem('meshcore-map-scope-filter') || 'all', scopeOverlay: localStorage.getItem('meshcore-map-scope-overlay') === 'true', regionScope: localStorage.getItem('meshcore-map-region-filter') || '' };
   let selectedReferenceNode = null;  // pubkey of the reference node for neighbor filtering
   let neighborPubkeys = null;        // Set of pubkeys that are direct neighbors of selected node
   let wsHandler = null;
@@ -63,6 +63,283 @@
   // marker-dot and label-stripe surfaces stay visually consistent. Module
   // scope (not loop-local) to avoid per-iteration object allocation.
   var MB_MARKER_TINT = { confirmed: '#56F0A0', suspected: '#FFD966', unknown: '#FF8888' };
+
+  // #2001 — repeater scope-configuration state, read straight from the
+  // scope_config_state field /api/nodes carries per forwarding node. The four
+  // declared states are the Scope Audit's own vocabulary (scope-audit.js
+  // CONFIG_STATES) and their titles say the same thing, so a repeater does not
+  // mean two different things on two pages.
+  //
+  // The two extra states exist because the audit lists only repeaters that
+  // have answered a declared-regions request, and the map draws every
+  // repeater. 'observed' is a node that never answered but has been seen
+  // forwarding scoped traffic; 'none' is one that never answered and has not
+  // been seen carrying anything scoped either.
+  //
+  // 'none' is not a fault. Firmware drops scoped floods for regions it holds
+  // no key for, so a repeater with no region config and a repeater nobody has
+  // sent scoped traffic past look identical from here — the title says so
+  // rather than leaving the grey to be read as red.
+  var SCOPE_STATES = [
+    { key: 'full', label: 'Full',
+      title: 'Declares named regions and \'*\': forwards its declared regions and plain unscoped floods.' },
+    { key: 'observed', label: 'Observed',
+      title: 'Never answered a declared-regions request, but has been observed forwarding scoped traffic, so it has a region configured. Which ones, and whether it also forwards unscoped floods, is unknown.' },
+    { key: 'no-unscoped', label: 'No unscoped',
+      title: 'Declares named regions but not \'*\': does not forward plain unscoped floods. Exact, not an inference.' },
+    { key: 'no-scopes', label: 'No scopes',
+      title: 'Declares only \'*\', no named regions: no region is flood-allowed. Almost always means no scopes are configured, but a repeater whose regions are all set to deny flooding looks identical.' },
+    { key: 'no-flood', label: 'No flood',
+      title: 'Declares neither named regions nor \'*\': an answered-but-empty list. Nothing is flood-allowed by this repeater, not even plain unscoped traffic.' },
+    { key: 'none', label: 'No data',
+      title: 'Never answered a declared-regions request and nothing scoped has been observed through it. That is missing information, not a finding: a repeater with no region config and one nobody sends scoped traffic past look the same from here.' },
+  ];
+  var SCOPE_STATE_KEYS = {};
+  SCOPE_STATES.forEach(function (s) { SCOPE_STATE_KEYS[s.key] = true; });
+
+  // scopeFilterAccepts answers whether a node survives the scope filter.
+  // A node with no scope_config_state is unclassified, never 'none': the
+  // server omits the field for roles that do not forward and for every node
+  // when the declared-regions lookup failed, and folding those into the
+  // no-data bucket would fill the category operators hunt in with phones.
+  function scopeFilterAccepts(n, selection) {
+    if (!selection || selection === 'all') return true;
+    return n.scope_config_state === selection;
+  }
+
+  // scopeStateLabel is the short name for a state, or '' for anything this
+  // build does not know. Used by the marker alt text so the dot-marker path
+  // carries the state in words too: the label path has a class, an aria-label
+  // and a title, and a bare dot would otherwise be colour and nothing else —
+  // which on the achromat preset is six greys within about 1.3:1 of each other.
+  function scopeStateLabel(state) {
+    for (var i = 0; i < SCOPE_STATES.length; i++) {
+      if (SCOPE_STATES[i].key === state) return SCOPE_STATES[i].label;
+    }
+    return '';
+  }
+
+  // scopeTint returns the marker fill for a node's scope state, or null when
+  // the node has none — null leaves the role colour in place rather than
+  // painting an unclassified node as if it had been measured. An unknown
+  // state string also returns null: emitting var(--mc-scope-<whatever>) would
+  // resolve to nothing and draw an invisible marker.
+  function scopeTint(n) {
+    var state = n && n.scope_config_state;
+    if (!state || !SCOPE_STATE_KEYS[state]) return null;
+    return 'var(--mc-scope-' + state + ')';
+  }
+
+  // scopeTintEnabled says whether markers should carry scope colours. The
+  // overlay checkbox turns them on for the whole map, and picking a state in
+  // the filter turns them on too: an operator who just asked "show me the
+  // repeaters with no scope data" should not have to find a second control to
+  // see the answer in the colour they picked it by.
+  function scopeTintEnabled(overlayOn, selection) {
+    return !!overlayOn || (!!selection && selection !== 'all');
+  }
+
+  // scopeFilterHtml builds the button group. Same shape as the byte-size and
+  // status groups above it, so the panel keeps one filter idiom.
+  function scopeFilterHtml(current) {
+    var cur = current || 'all';
+    // Each state button carries the swatch its markers are painted with: the
+    // map has no separate colour legend, so this group is the legend.
+    var btn = function (key, label, title, swatch) {
+      var dot = swatch ? '<span class="legend-swatch scope-swatch" style="background:var(--mc-scope-' + key + ')" aria-hidden="true"></span> ' : '';
+      return '<button class="btn' + (cur === key ? ' active' : '') + '" data-scope="' + key + '"' +
+        (title ? ' title="' + title.replace(/"/g, '&quot;') + '"' : '') + '>' + dot + label + '</button>';
+    };
+    return '<fieldset class="mc-section">' +
+      '<legend class="mc-label">Scope Config</legend>' +
+      '<div class="filter-group" id="mcScopeFilter">' +
+      btn('all', 'All', 'Every node, whatever its scope state') +
+      SCOPE_STATES.map(function (s) { return btn(s.key, s.label, s.title, true); }).join('') +
+      '</div></fieldset>';
+  }
+
+  // #1862 region-scope filter: "show me the repeaters that forward #be".
+  // Reads two fields /api/nodes already carries per repeater/room, so the map
+  // filters what fetchAllNodes loaded and makes no request of its own:
+  //   - declared_regions: the repeater's own declared answer, the list the
+  //     Scope Audit shows as declaredRegions ('#' stripped, '*' left out);
+  //   - transported_scopes: region scopes of traffic whose path names this
+  //     repeater by its full pubkey, the "observed" side #2006 already uses.
+  // Either one is evidence. Neither being present is not evidence of the
+  // opposite: most repeaters have never been asked for their list, and a
+  // repeater that holds a region shows no traffic for it until some passes
+  // its way. The hint under the picker says so.
+
+  // normRegion mirrors the server's normScope (scope_audit.go): strip one
+  // leading '#', nothing else, so the map and the audit spell a region alike.
+  function normRegion(s) {
+    s = s == null ? '' : String(s);
+    return s.charAt(0) === '#' ? s.slice(1) : s;
+  }
+
+  function nodeRegionEvidence(n, region) {
+    var want = normRegion(region);
+    var ev = { declared: false, observed: false };
+    if (!want || !n) return ev;
+    var d = Array.isArray(n.declared_regions) ? n.declared_regions : [];
+    for (var i = 0; i < d.length; i++) { if (normRegion(d[i]) === want) { ev.declared = true; break; } }
+    var t = Array.isArray(n.transported_scopes) ? n.transported_scopes : [];
+    for (var j = 0; j < t.length; j++) { if (normRegion(t[j]) === want) { ev.observed = true; break; } }
+    return ev;
+  }
+
+  function regionFilterAccepts(n, region) {
+    if (!region) return true;
+    var ev = nodeRegionEvidence(n, region);
+    return ev.declared || ev.observed;
+  }
+
+  // nodeFiltersNarrowed says whether a node filter that also removes
+  // non-forwarding roles is active. The observer layer stands down while it
+  // is (see observerLayerShown).
+  function nodeFiltersNarrowed(f) {
+    return (!!f.scopeState && f.scopeState !== 'all') || !!f.regionScope;
+  }
+
+  // observerLayerShown decides whether _renderMarkersInner draws the plain
+  // observer pins. #2001: while a specific scope state is picked, the observer
+  // layer stands down. Two reasons: the filter leads (see nodePassesMapFilters),
+  // so leaving unrelated pins on the map contradicts the answer; and a
+  // repeater that is also an observer would otherwise drop out of the filtered
+  // nodes, stop matching displayedNodePubkeys, and reappear as a plain observer
+  // pin: the node the operator just filtered away, back in another guise.
+  // #1862: the region filter narrows the same way, for the same reasons.
+  function observerLayerShown(f) {
+    return !!f.observer && !nodeFiltersNarrowed(f);
+  }
+
+  // nodePassesMapFilters is the marker filter _renderMarkersInner runs over
+  // the loaded nodes. ctx carries the neighbor-filter state
+  // ({ selectedReferenceNode, neighborPubkeys }).
+  function nodePassesMapFilters(n, f, ctx) {
+    if (!n.lat || !n.lon) return false;
+    if (!f[n.role || 'companion']) return false;
+    // Byte size filter (applies only to repeaters). A node with no observed
+    // size is its own bucket: folding it into "1-byte" made that bucket a
+    // mix of measured and merely-unheard nodes.
+    if (f.byteSize !== 'all' && (n.role || 'companion') === 'repeater') {
+      const hi = hashPrefixInfo(n);
+      if (f.byteSize === 'unknown') {
+        if (hi.known) return false;
+      } else if (!hi.known || String(hi.bytes) !== f.byteSize) {
+        return false;
+      }
+    }
+    // Scope config filter (#2001). Applied to every role, not just repeaters:
+    // picking a scope state is a question about repeater configuration, and
+    // the answer should not leave companions and sensors sitting on the map
+    // as if they were part of it. Unclassified nodes therefore drop out too;
+    // see scopeFilterAccepts.
+    //
+    // This deliberately differs from the byte-size filter above, which gates
+    // itself on role === 'repeater' and leaves everything else visible. Asked
+    // and decided (#2006 review): this filter leads. The byte filter is not
+    // changed here; that is its own behaviour change, for its own PR.
+    if (!scopeFilterAccepts(n, f.scopeState)) return false;
+    // Region scope filter (#1862). Same rule as the scope filter above: it
+    // applies to every role, so non-forwarding nodes drop out while a region
+    // is picked.
+    if (!regionFilterAccepts(n, f.regionScope)) return false;
+    // Status filter
+    if (f.statusFilter !== 'all') {
+      const status = getNodeStatus(n); // #1598: relay-aware for infra
+      if (status !== f.statusFilter) return false;
+    }
+    // Neighbor filter: show only the reference node and its direct neighbors
+    if (f.neighbors && ctx.selectedReferenceNode && ctx.neighborPubkeys) {
+      const pk = n.public_key;
+      if (pk !== ctx.selectedReferenceNode && !ctx.neighborPubkeys.has(pk)) return false;
+    }
+    return true;
+  }
+
+  // collectRegionCounts builds the picker's option list from the loaded nodes:
+  // one pass, one Set per node so a region both declared and observed counts
+  // that node once in total. Only nodes with a map position count, the same
+  // test nodePassesMapFilters applies first, so a count never promises a
+  // marker the map cannot draw.
+  function collectRegionCounts(list) {
+    var byRegion = new Map();
+    function entry(r) {
+      var e = byRegion.get(r);
+      if (!e) { e = { region: r, total: 0, declared: 0, observed: 0 }; byRegion.set(r, e); }
+      return e;
+    }
+    (list || []).forEach(function (n) {
+      if (!n || !n.lat || !n.lon) return;
+      var seen = new Set();
+      var declared = new Set();
+      (Array.isArray(n.declared_regions) ? n.declared_regions : []).forEach(function (r) {
+        r = normRegion(r);
+        if (r && !declared.has(r)) { declared.add(r); seen.add(r); entry(r).declared++; }
+      });
+      var observed = new Set();
+      (Array.isArray(n.transported_scopes) ? n.transported_scopes : []).forEach(function (r) {
+        r = normRegion(r);
+        if (r && !observed.has(r)) { observed.add(r); seen.add(r); entry(r).observed++; }
+      });
+      seen.forEach(function (r) { entry(r).total++; });
+    });
+    return Array.from(byRegion.values()).sort(function (a, b) { return a.region < b.region ? -1 : (a.region > b.region ? 1 : 0); });
+  }
+
+  function regionFilterOptionsHtml(counts, current) {
+    var cur = normRegion(current);
+    var list = (counts || []).slice();
+    if (cur && !list.some(function (c) { return c.region === cur; })) list.push({ region: cur, total: 0 });
+    return '<option value=""' + (cur ? '' : ' selected') + '>All regions</option>' +
+      list.map(function (c) {
+        return '<option value="' + safeEsc(c.region) + '"' + (c.region === cur ? ' selected' : '') + '>#' +
+          safeEsc(c.region) + ' (' + c.total + ')</option>';
+      }).join('');
+  }
+
+  function regionFilterHintHtml(counts, current) {
+    var cur = normRegion(current);
+    if (!cur) return '';
+    var c = null;
+    for (var i = 0; i < (counts || []).length; i++) { if (counts[i].region === cur) { c = counts[i]; break; } }
+    var name = '#' + safeEsc(cur);
+    var found = c
+      ? c.total + ' node' + (c.total === 1 ? ' with a map position has' : 's with a map position have') + ' evidence for ' + name + ': ' +
+        c.declared + ' declare it, ' + c.observed + ' seen carrying its traffic.'
+      : 'No loaded node with a map position has evidence for ' + name + '.';
+    return found + ' Absence here is not proof: most repeaters were never asked for their region list, ' +
+      'and a repeater only shows traffic for a region once some passes its way.';
+  }
+
+  // regionsPopupRowsHtml is the popup's answer to "why is this node on the
+  // map for #be": the declared list and the observed scopes, kept apart
+  // because they are different kinds of evidence.
+  function regionsPopupRowsHtml(n) {
+    var dt = function (label, title) {
+      return '<dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;" title="' + safeEsc(title) + '">' + label + '</dt>';
+    };
+    var names = function (list) {
+      return list.map(function (r) { return '#' + safeEsc(normRegion(r)); }).join(', ');
+    };
+    var out = '';
+    if (Array.isArray(n.declared_regions)) {
+      // Same badge and wording as the Scope Audit's truncated flag
+      // (scope-audit.js), so a partial list is not shown as the whole answer.
+      var truncated = n.declared_regions_truncated === true
+        ? ' <span class="ns-truncated" title="Declared list was truncated by the repeater, so a region missing here is not necessarily a real absence.">truncated</span>'
+        : '';
+      out += dt('Declared', 'Named regions from this repeater’s own declared-regions answer, the same list the Scope Audit shows.') +
+        '<dd style="margin-left:88px;padding:2px 0;font-size:12px;">' +
+        (n.declared_regions.length ? names(n.declared_regions) : '<span style="color:var(--text-muted);">no named region</span>') + truncated + '</dd>';
+    }
+    if (Array.isArray(n.transported_scopes) && n.transported_scopes.length) {
+      out += dt('Observed', 'Region scopes of traffic whose path names this repeater by its full pubkey, over the server’s in-memory packet window.') +
+        '<dd style="margin-left:88px;padding:2px 0;font-size:12px;">' + names(n.transported_scopes) + '</dd>';
+    }
+    return out;
+  }
 
   function makeMarkerIcon(role, isStale, isAlsoObserver, colorOverride) {
     const s = ROLE_STYLE[role] || ROLE_STYLE.companion;
@@ -140,7 +417,7 @@
     });
   }
 
-  function makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus) {
+  function makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus, scopeState) {
     // Show the short mesh hash ID (first N bytes of pubkey, uppercased). When
     // the width is unobserved the label falls back to one byte — it has to draw
     // something — but says so instead of asserting a 1-byte config.
@@ -161,8 +438,21 @@
     var shortHash = hashInfo.prefix;
     var statusClass = status ? (' ' + (MB_STATUS_CLASS[status] || MB_STATUS_CLASS.unknown)) : '';
     var ariaWidth = hashInfo.known ? '' : ', hash size unknown';
-    var ariaStatus = status ? ('multi-byte ' + status + ', hash ' + shortHash + ariaWidth)
-                            : ('repeater hash ' + shortHash + ariaWidth);
+    // #2001: the scope-config overlay colours this label's left border, and a
+    // colour alone says nothing to a screen reader or to an operator who
+    // cannot separate the hues. The state goes into the aria-label and into a
+    // hover title so the stripe is never the only carrier.
+    var scopeMeta = null;
+    if (scopeState) {
+      for (var si = 0; si < SCOPE_STATES.length; si++) {
+        if (SCOPE_STATES[si].key === scopeState) { scopeMeta = SCOPE_STATES[si]; break; }
+      }
+    }
+    var scopeClass = scopeMeta ? (' scope-' + scopeMeta.key) : '';
+    var scopeAria = scopeMeta ? (', scope config ' + scopeMeta.label) : '';
+    var scopeTitle = scopeMeta ? (' title="' + scopeMeta.label + ' — ' + scopeMeta.title.replace(/"/g, '&quot;') + '"') : '';
+    var ariaStatus = status ? ('multi-byte ' + status + ', hash ' + shortHash + ariaWidth + scopeAria)
+                            : ('repeater hash ' + shortHash + ariaWidth + scopeAria);
     // Observer indicator stays a star — it is an orthogonal signal, not a status color.
     var obsIndicator = isAlsoObserver
       ? ' <span aria-hidden="true" style="color:' + (ROLE_COLORS.observer || '#f1c40f') + ';font-size:13px;line-height:1;" title="Also an observer"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-star-fill"/></svg></span>'
@@ -170,7 +460,7 @@
     // Glyph + thin-space (U+2009) + hash. Visible content is aria-hidden so AT
     // reads the aria-label only (avoids "check mark 3 E" literal announcements).
     var visible = (glyph ? glyph + '\u2009' : '') + shortHash;
-    var html = '<div class="mc-mb-label' + statusClass + unknownWidth + '" role="img" aria-label="' + ariaStatus + '">' +
+    var html = '<div class="mc-mb-label' + statusClass + scopeClass + unknownWidth + '" role="img" aria-label="' + ariaStatus + '"' + scopeTitle + '>' +
       '<span aria-hidden="true">' + visible + '</span>' + obsIndicator + '</div>';
     return L.divIcon({
       html: html,
@@ -198,6 +488,11 @@
             <div id="mapPiResults"></div>
           </div>
         </div>
+        <div class="mc-region-chip" id="mcRegionChip" role="status" hidden>
+          <span class="mc-region-chip-text" id="mcRegionChipText"></span>
+          <span aria-hidden="true">·</span>
+          <button type="button" class="mc-region-chip-reset" id="mcRegionChipReset" aria-label="Clear the region filter">reset</button>
+        </div>
         <button class="map-controls-toggle" id="mapControlsToggle" aria-label="Toggle map controls" aria-expanded="true"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-gear"/></svg></button>
         <div class="map-controls" id="mapControls" role="region" aria-label="Map controls">
           <h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-map-trifold"/></svg> Map Controls</h3>
@@ -221,6 +516,7 @@
             <label for="mcHeatmap"><input type="checkbox" id="mcHeatmap"> Heat map</label>
             <label for="mcHashLabels"><input type="checkbox" id="mcHashLabels"> Hash prefix labels</label>
             <label for="mcMultiByte"><input type="checkbox" id="mcMultiByte"> Multi-byte support</label>
+            <label for="mcScopeOverlay" title="Colour repeater markers by their region-scope configuration"><input type="checkbox" id="mcScopeOverlay"> Scope config colours</label>
             <label id="mcGeoFilterLabel" for="mcGeoFilter" style="display:none"><input type="checkbox" id="mcGeoFilter"> Mesh live area</label>
           </fieldset>
           <div id="mapAreaFilter"></div>
@@ -231,6 +527,13 @@
               <button class="btn ${filters.statusFilter==='active'?'active':''}" data-status="active">Active</button>
               <button class="btn ${filters.statusFilter==='stale'?'active':''}" data-status="stale">Stale</button>
             </div>
+          </fieldset>
+          ${scopeFilterHtml(filters.scopeState)}
+          <fieldset class="mc-section">
+            <legend class="mc-label">Region Scope</legend>
+            <label for="mcRegionFilter" class="sr-only">Show nodes with evidence for a region scope</label>
+            <select id="mcRegionFilter" title="Show nodes that declare a region scope or were seen carrying its traffic">${regionFilterOptionsHtml([], filters.regionScope)}</select>
+            <div id="mcRegionHint" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
           </fieldset>
           <fieldset class="mc-section">
             <legend class="mc-label">Filters</legend>
@@ -299,6 +602,7 @@
       }
     }
     map = L.map('leaflet-map', { zoomControl: true }).setView(initCenter, initZoom);
+    const initializedMap = map;
 
     // If navigated with ?node=PUBKEY, highlight that node after markers load
     targetNodeKey = urlParams.get('node') || null;
@@ -434,7 +738,7 @@
     }
 
     // Fix map size on SPA load
-    setTimeout(() => map.invalidateSize(), 100);
+    setTimeout(() => { if (map === initializedMap) map.invalidateSize(); }, 100);
 
     // Controls toggle
     const toggleBtn = document.getElementById('mapControlsToggle');
@@ -584,6 +888,15 @@
       multiByteEl.checked = filters.multiByteOverlay;
       multiByteEl.addEventListener('change', e => { filters.multiByteOverlay = e.target.checked; localStorage.setItem('meshcore-map-multibyte-overlay', e.target.checked); renderMarkers(); });
     }
+    // #2001 scope-config colours. Same shape as the multi-byte overlay above,
+    // and deliberately a separate control from the Scope Config filter: the
+    // filter answers "show me only these", the overlay answers "colour what
+    // is on screen", and an operator wants either without the other.
+    const scopeOverlayEl = document.getElementById('mcScopeOverlay');
+    if (scopeOverlayEl) {
+      scopeOverlayEl.checked = filters.scopeOverlay;
+      scopeOverlayEl.addEventListener('change', e => { filters.scopeOverlay = e.target.checked; localStorage.setItem('meshcore-map-scope-overlay', e.target.checked); renderMarkers(); });
+    }
     document.getElementById('mcLastHeard').addEventListener('change', e => { filters.lastHeard = e.target.value; loadNodes(); });
 
     AreaFilter.init(document.getElementById('mapAreaFilter'));
@@ -599,6 +912,30 @@
       });
     });
 
+    // Scope config filter buttons (#2001)
+    document.querySelectorAll('#mcScopeFilter .btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        filters.scopeState = btn.dataset.scope;
+        localStorage.setItem('meshcore-map-scope-filter', filters.scopeState);
+        document.querySelectorAll('#mcScopeFilter .btn').forEach(b => b.classList.toggle('active', b.dataset.scope === filters.scopeState));
+        renderMarkers();
+      });
+    });
+
+    // Region scope filter (#1862). Options are rebuilt from the loaded nodes
+    // in buildRegionFilter; persisted the same way as the scope filter above.
+    const regionFilterEl = document.getElementById('mcRegionFilter');
+    if (regionFilterEl) {
+      regionFilterEl.addEventListener('change', e => setRegionFilter(e.target.value));
+    }
+    // The on-map chip (#2022 review): on a phone the controls panel starts
+    // collapsed, so a stored region would thin the map with no visible cause.
+    const regionChipResetEl = document.getElementById('mcRegionChipReset');
+    if (regionChipResetEl) {
+      regionChipResetEl.addEventListener('click', () => setRegionFilter(''));
+    }
+    updateRegionChip();
+
     // Byte size filter buttons
     document.querySelectorAll('#mcByteFilter .btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -613,6 +950,7 @@
     (async function () {
       try {
         const gf = await api('/config/geo-filter', { ttl: 3600 });
+        if (map !== initializedMap) return;
         if (!gf || !gf.polygon || gf.polygon.length < 3) return;
         const geoColor = getComputedStyle(document.documentElement).getPropertyValue('--geo-filter-color').trim() || '#3b82f6';
         const latlngs = gf.polygon.map(function (p) { return [p[0], p[1]]; });
@@ -662,6 +1000,7 @@
     });
 
     loadNodes().then(() => {
+      if (map !== initializedMap) return;
       // Check for route from packet detail (via sessionStorage)
       const routeHopsJson = sessionStorage.getItem('map-route-hops');
       if (routeHopsJson) {
@@ -1374,22 +1713,30 @@
   }
 
   async function loadNodes() {
+    const loadingMap = map;
+    if (!loadingMap) return;
     try {
       // Load regions from config + observed IATAs
-      try { REGION_NAMES = await api('/config/regions', { ttl: 3600 }); } catch {}
+      let regions = REGION_NAMES;
+      try { regions = await api('/config/regions', { ttl: 3600 }); } catch {}
+      if (map !== loadingMap) return;
+      REGION_NAMES = regions;
 
       const aqs = AreaFilter.areaQueryString();
       // Paginate past the server's per-request node cap (listLimits.nodesMax)
       // so actively-relaying repeaters that last advertised hours ago still
       // appear instead of being truncated by the top-N window. See fetchAllNodes.
       const data = await fetchAllNodes(`&lastHeard=${filters.lastHeard}${aqs}`, { ttl: CLIENT_TTL.nodeList });
-      nodes = data.nodes || [];
+      if (map !== loadingMap) return;
 
       // Load observers for jump buttons + map markers
       const obsData = await api('/observers', { ttl: CLIENT_TTL.observers });
+      if (map !== loadingMap) return;
+      nodes = data.nodes || [];
       observers = obsData.observers || [];
 
       buildRoleChecks(data.counts || {});
+      buildRegionFilter();
       buildJumpButtons();
 
       renderMarkers();
@@ -1411,6 +1758,7 @@
           map.setView([targetNode.lat, targetNode.lon], 14);
           // Delay popup open slightly — Leaflet needs the map to settle after setView
           setTimeout(() => {
+            if (map !== loadingMap) return;
             let found = false;
             const findIn = function (layer) {
               if (found || !layer || !layer.eachLayer) return;
@@ -1449,12 +1797,12 @@
       // Don't fitBounds on initial load — respect the Bay Area default or saved view
       // Only fitBounds on subsequent data refreshes if user hasn't manually panned
     } catch (e) {
-      console.error('Map load error:', e);
+      if (map === loadingMap) console.error('Map load error:', e);
     } finally {
       // Always signal data-loaded — even on error — so E2E tests can proceed.
       // Otherwise an api() failure leaves the test waiting forever.
       var mapContainer = document.getElementById('leaflet-map');
-      if (mapContainer) mapContainer.setAttribute('data-loaded', 'true');
+      if (map === loadingMap && mapContainer) mapContainer.setAttribute('data-loaded', 'true');
     }
   }
 
@@ -1502,6 +1850,42 @@
       });
       el.appendChild(lbl);
     }
+  }
+
+  // #1862: region counts for the loaded nodes, kept for the hint so a change
+  // of selection does not walk the node list again.
+  let regionCounts = [];
+
+  function buildRegionFilter() {
+    regionCounts = collectRegionCounts(nodes);
+    const sel = document.getElementById('mcRegionFilter');
+    if (sel) sel.innerHTML = regionFilterOptionsHtml(regionCounts, filters.regionScope);
+    updateRegionHint();
+  }
+
+  function setRegionFilter(region) {
+    filters.regionScope = region;
+    localStorage.setItem('meshcore-map-region-filter', filters.regionScope);
+    const sel = document.getElementById('mcRegionFilter');
+    if (sel && sel.value !== region) sel.value = region;
+    updateRegionHint();
+    renderMarkers();
+  }
+
+  function updateRegionHint() {
+    const el = document.getElementById('mcRegionHint');
+    if (el) el.innerHTML = regionFilterHintHtml(regionCounts, filters.regionScope);
+    updateRegionChip();
+  }
+
+  // updateRegionChip shows the active region on the map itself, as text, and
+  // hides the chip while no region is picked.
+  function updateRegionChip() {
+    const chip = document.getElementById('mcRegionChip');
+    const chipText = document.getElementById('mcRegionChipText');
+    const cur = normRegion(filters.regionScope);
+    if (chipText) chipText.textContent = cur ? 'Region: #' + cur : '';
+    if (chip) chip.hidden = !cur;
   }
 
   let REGION_NAMES = {};
@@ -1678,32 +2062,8 @@
     if (clusterGroup) clusterGroup.clearLayers();
     _currentMarkerData = [];
 
-    const filtered = nodes.filter(n => {
-      if (!n.lat || !n.lon) return false;
-      if (!filters[n.role || 'companion']) return false;
-      // Byte size filter (applies only to repeaters). A node with no observed
-      // size is its own bucket — folding it into "1-byte" made that bucket a
-      // mix of measured and merely-unheard nodes.
-      if (filters.byteSize !== 'all' && (n.role || 'companion') === 'repeater') {
-        const hi = hashPrefixInfo(n);
-        if (filters.byteSize === 'unknown') {
-          if (hi.known) return false;
-        } else if (!hi.known || String(hi.bytes) !== filters.byteSize) {
-          return false;
-        }
-      }
-      // Status filter
-      if (filters.statusFilter !== 'all') {
-        const status = getNodeStatus(n); // #1598: relay-aware for infra
-        if (status !== filters.statusFilter) return false;
-      }
-      // Neighbor filter: show only the reference node and its direct neighbors
-      if (filters.neighbors && selectedReferenceNode && neighborPubkeys) {
-        const pk = n.public_key;
-        if (pk !== selectedReferenceNode && !neighborPubkeys.has(pk)) return false;
-      }
-      return true;
-    });
+    const filterCtx = { selectedReferenceNode, neighborPubkeys };
+    const filtered = nodes.filter(n => nodePassesMapFilters(n, filters, filterCtx));
 
     const allMarkers = [];
 
@@ -1730,15 +2090,32 @@
         // set kept in sync with --mc-mb-* CSS stripes so label + marker agree.
         mbColor = MB_MARKER_TINT[mbStatus] || MB_MARKER_TINT.unknown;
       }
-      const icon = useLabel ? makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus) : makeMarkerIcon(node.role || 'companion', isStale, isAlsoObserver, mbColor);
+      // #2001: scope-config tint. One marker carries one colour, so when both
+      // overlays are on the older multi-byte tint keeps the marker and the
+      // scope overlay stands down rather than the two fighting over the fill.
+      var scopeState = (scopeTintEnabled(filters.scopeOverlay, filters.scopeState) && !mbColor) ? (node.scope_config_state || null) : null;
+      var scopeColor = scopeState ? scopeTint(node) : null;
+      const icon = useLabel ? makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus, scopeState) : makeMarkerIcon(node.role || 'companion', isStale, isAlsoObserver, mbColor || scopeColor);
       const latLng = L.latLng(node.lat, node.lon);
-      allMarkers.push({ latLng, node, icon, isLabel: useLabel, popupFn: function() { return buildPopup(node); }, alt: (node.name || 'Unknown') + ' (' + (node.role || 'node') + (isAlsoObserver ? ' + observer' : '') + ')' });
+      // The scope state has to leave the fill and reach the DOM, or a dot marker
+      // is colour and nothing else — which on the achromat preset is six greys
+      // inside 1.7:1. It goes on `title`, NOT `alt`: Leaflet sets options.alt
+      // only when the icon element is an <img> (leaflet-src.js, L.Marker
+      // _initIcon), and every icon on this map is a divIcon, so an alt string
+      // never lands. options.title is applied to whatever element the icon
+      // produced. The popup carries it too, for the pointerless case.
+      var scopeLabel = scopeState ? scopeStateLabel(scopeState) : '';
+      var markerAlt = (node.name || 'Unknown') + ' (' + (node.role || 'node') + (isAlsoObserver ? ' + observer' : '') + ')' +
+        (scopeLabel ? ', scope config ' + scopeLabel : '');
+      allMarkers.push({ latLng, node, icon, isLabel: useLabel, popupFn: function() { return buildPopup(node); }, alt: markerAlt, title: scopeLabel ? markerAlt : '' });
     }
 
     // Add observer markers (skip observers already represented as a node marker)
     // Build set of node pubkeys that are displayed on the map
     const displayedNodePubkeys = new Set(filtered.map(n => (n.public_key || '').toLowerCase()));
-    if (filters.observer) {
+    // #2001/#1862: the observer layer stands down while a node filter narrows
+    // the map; see observerLayerShown.
+    if (observerLayerShown(filters)) {
       for (const obs of observers) {
         if (!obs.lat || !obs.lon) continue;
         // Skip observers whose pubkey matches a displayed node — they're shown as combined markers
@@ -1767,7 +2144,7 @@
     var clusterMarkers = [];
     for (const m of allMarkers) {
       const pos = (useCluster ? m.latLng : (m.adjustedLatLng || m.latLng));
-      const marker = L.marker(pos, { icon: m.icon, alt: m.alt });
+      const marker = L.marker(pos, { icon: m.icon, alt: m.alt, title: m.title || '' });
       marker._nodeKey = m.node.public_key || m.node.id || null;
       marker._role = (m.node && m.node.role) || 'companion';
       marker.bindPopup(m.popupFn(), { maxWidth: 280 });
@@ -1882,6 +2259,20 @@
       : `<span style="font-weight:400;color:var(--text-muted);">Unknown</span>`;
     const hashPrefixRow = `<dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Hash Prefix</dt>
           <dd style="font-family:var(--mono);font-size:11px;font-weight:700;margin-left:88px;padding:2px 0;">${hashPrefixValue}</dd>`;
+    // #2001 — scope config, whenever the server classified this node. Stated
+    // here as well as in the marker title because a popup is the one surface
+    // every path reaches: dot markers, hash labels and clustered markers alike.
+    var scopeRow = '';
+    var scopeMeta = null;
+    for (var sgi = 0; sgi < SCOPE_STATES.length; sgi++) {
+      if (SCOPE_STATES[sgi].key === node.scope_config_state) { scopeMeta = SCOPE_STATES[sgi]; break; }
+    }
+    if (scopeMeta) {
+      scopeRow = '<dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Scope</dt>' +
+        '<dd style="margin-left:88px;padding:2px 0;font-size:12px;" title="' + safeEsc(scopeMeta.title) + '">' +
+        '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--mc-scope-' + scopeMeta.key + ');margin-right:5px;"></span>' +
+        safeEsc(scopeMeta.label) + '</dd>';
+    }
     // Multi-byte support indicator for repeaters
     var mbRow = '';
     if (node.role === 'repeater' && node.multi_byte_status) {
@@ -1898,6 +2289,8 @@
         <dl style="margin-top:8px;font-size:12px;">
           ${hashPrefixRow}
           ${mbRow}
+          ${scopeRow}
+          ${regionsPopupRowsHtml(node)}
           <dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Key</dt>
           <dd style="font-family:var(--mono);font-size:11px;margin-left:88px;padding:2px 0;">${safeEsc(key)}</dd>
           <dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Location</dt>
@@ -2418,6 +2811,25 @@
     window.__meshcoreMapInternals = {
       createClusterGroup: createClusterGroup,
       makeClusterIcon: makeClusterIcon,
+      // #2001: the three pure pieces of the scope-state layer, so the filter
+      // rule and the tint can be asserted without a browser.
+      scopeFilterAccepts: scopeFilterAccepts,
+      scopeTint: scopeTint,
+      scopeTintEnabled: scopeTintEnabled,
+      scopeStateLabel: scopeStateLabel,
+      scopeFilterHtml: scopeFilterHtml,
+      // #1862: the region-scope filter's pure pieces, plus the live filter
+      // state so persistence can be asserted.
+      regionFilterAccepts: regionFilterAccepts,
+      nodeRegionEvidence: nodeRegionEvidence,
+      collectRegionCounts: collectRegionCounts,
+      regionFilterOptionsHtml: regionFilterOptionsHtml,
+      regionFilterHintHtml: regionFilterHintHtml,
+      regionsPopupRowsHtml: regionsPopupRowsHtml,
+      nodeFiltersNarrowed: nodeFiltersNarrowed,
+      observerLayerShown: observerLayerShown,
+      nodePassesMapFilters: nodePassesMapFilters,
+      filters: filters,
       // #1356: exposed so the a11y test can assert what the label RENDERS
       // instead of grepping map.js for where two identifiers sit.
       makeRepeaterLabelIcon: makeRepeaterLabelIcon,

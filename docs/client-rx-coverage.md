@@ -46,7 +46,7 @@ packet (promiscuous, incl. overheard flood traffic), not just messages addressed
   is connected over BLE (`_serial->isConnected()`).
 
 So per received packet the app gets SNR + RSSI + the raw bytes. It decodes the raw packet (standard
-MeshCore format) to derive the directly-heard node (`path[last]` or 0-hop advert pubkey) and pairs it
+MeshCore format) to derive the directly-heard node (`path[last]`, a 0-hop advert pubkey, or a 0-hop node-discover response pubkey) and pairs it
 with the phone's GPS. The bare advert push (`PUSH_CODE_ADVERT` 0x80) carries only a pubkey (no SNR/
 RSSI/path) and is NOT used — 0x88 already covers adverts (the raw advert is in its payload).
 
@@ -82,6 +82,34 @@ Payload — meshcoretomqtt-compatible packet, plus a `gps` object:
 - Subscription: the ingestor's default subscription (`meshcore/#`) already covers this topic. Sources
   configured with an explicit topic list must add `meshcore/client/+/packets`.
 
+### Region answers — `meshcore/client/{PUBLIC_KEY}/regions`
+
+CoreDrive RX can also ask a repeater it hears directly which regions it is configured to flood, and
+publishes the answer here. It is accepted under the same `clientRxCoverage.enabled` switch and lands
+in `node_declared_regions`, which the Scope Audit page and the `autoRegionKeys` tier read alongside
+the observer `/neighbors` source (`nodes.configured_scope`). Newest answer per repeater wins across
+both, by the answer's own `timestamp`, so a buffered upload arriving late cannot overwrite a fresher
+one.
+
+```json
+{
+  "origin": "<companion name>",
+  "origin_id": "<companion pubkey hex>",
+  "timestamp": "2026-09-18T09:09:32.120Z",
+  "type": "REGIONS",
+  "target": "<repeater pubkey, 64 hex>",
+  "regions": ["*", "hu"],
+  "truncated": false
+}
+```
+
+- `regions: []` is stored: the repeater answered that it floods nothing. A missing or non-array
+  `regions` is dropped, never read as an empty answer.
+- `target` must be a full 64-hex pubkey. Names containing a comma, longer than 64 characters, or past
+  the 64th entry are dropped and the answer is flagged truncated.
+- The broker ACL must allow the client to publish to `/regions` as well as `/packets` and `/rf`.
+  Explicit topic lists need `meshcore/client/+/regions` (or `meshcore/client/#`).
+
 ## Capture HARD RULE — only what was heard directly
 
 The app and ingestor record **only the node the companion physically received**, never upstream
@@ -112,11 +140,16 @@ client_receptions(
   UNIQUE(rx_pubkey, heard_key, rx_at))   -- idempotent re-ingest
 ```
 
-`heard_keylen` is 32 for a full pubkey (0-hop advert) or 2/3 for a multibyte prefix. `src` is
-`advert` or `rxlog`. No hex cell is stored — binning is computed server-side from lat/lon.
+`heard_keylen` is 32 for a full pubkey (0-hop advert, or a node-discover response that carried the
+full key) or 2, 3 or 8 for a multibyte prefix. `src` is `advert`, `rxlog` or `discover`.
+
+`discover` rows come from a 0-hop CONTROL/DISCOVER_RESP, which carries the responder's OWN pubkey
+in its payload — a first-hand identification, not a path inference. corescope-rx asks for
+DISCOVER_PREFIX_ONLY to save airtime, so those keys are normally 8 bytes; per-node coverage queries
+must therefore include the 16-hex prefix among their heard_key candidates. No hex cell is stored — binning is computed server-side from lat/lon.
 
 Indexes: a composite `(heard_key, heard_keylen, lat, lon)` and a `(lat, lon)` index back the coverage
-queries; the per-node query matches a sargable `heard_key IN (pubkey, prefix6, prefix4)` list so the
+queries; the per-node query matches a sargable `heard_key IN (pubkey, prefix16, prefix6, prefix4)` list so the
 composite is used instead of a table scan (see the benchmark in `cmd/ingestor`).
 
 Retention: the table grows on every submission, so set `retention.clientRxDays` (ingestor) to delete
@@ -203,7 +236,8 @@ server-side (read-only). Each feature:
 ```
 
 - Hex binning is a pure-Go pointy-top grid over Web Mercator (`cmd/server/hexgrid.go`). We do **not**
-  use `uber/h3-go` because it is CGO and the project builds with `CGO_ENABLED=0`. Latitude is only
+  use `uber/h3-go`, which would add a C dependency for no benefit (the SQLite driver
+  is cgo since the mattn/go-sqlite3 move, but that is a library we need). Latitude is only
   defined within ±85.05° (Web Mercator limit) and is clamped to that range.
 - `z` (Leaflet zoom) selects the hex resolution (zoom-adaptive). Raw points never leave the server
   (privacy: contributors' tracks are not exposed).

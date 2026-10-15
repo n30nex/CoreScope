@@ -7,14 +7,14 @@
   // ── Constants ──
 
   var DEFAULT_HOME = {
-    heroTitle: 'CoreScope',
-    heroSubtitle: 'Real-time MeshCore LoRa mesh network analyzer',
+    heroTitle: 'Canadaverse CoreScope',
+    heroSubtitle: 'Follow the mesh. Inspect packets, explore routes, and find your nodes.',
     // #1648 M5: defaults use 'ph:<name>' sprite tokens. Back-compat: the
     // render path (renderConfigGlyph) ALSO accepts legacy emoji strings
     // for operators with stored config values.
     steps: [
       { emoji: 'ph:bluetooth', title: 'Connect via Bluetooth', description: 'Flash **BLE companion** firmware from [MeshCore Flasher](https://flasher.meshcore.io/).\n- Screenless devices: default PIN `123456`\n- Screen devices: random PIN shown on display\n- If pairing fails: forget device, reboot, re-pair' },
-      { emoji: 'ph:radio', title: 'Set the right frequency preset', description: '**US Recommended:**\n`910.525 MHz · BW 62.5 kHz · SF 7 · CR 5`\nSelect **"US Recommended"** in the app or flasher.' },
+      { emoji: 'ph:radio', title: 'Choose your local radio preset', description: 'Use the preset published by your local mesh community. See the [Canadaverse MeshCore guide](https://canadaverse.org/meshcore/) for regional setup resources.' },
       { emoji: 'ph:broadcast', title: 'Advertise yourself', description: 'Tap the signal icon → **Flood** to broadcast your node to the mesh. Companions only advert when you trigger it manually.' },
       { emoji: 'ph:repeat', title: 'Check "Heard N repeats"', description: '- **"Sent"** = transmitted, no confirmation\n- **"Heard 0 repeats"** = no repeater picked it up\n- **"Heard 1+ repeats"** = you\'re on the mesh!' }
     ],
@@ -48,6 +48,8 @@
     navActiveBg: '--nav-active-bg',
     background: '--surface-0', text: '--text', textMuted: '--text-muted', border: '--border',
     statusGreen: '--status-green', statusYellow: '--status-yellow', statusRed: '--status-red',
+    statusYellowText: '--status-yellow-text', statusRedText: '--status-red-text',
+    statusGreenTintText: '--status-green-tint-text',
     surface1: '--surface-1', surface2: '--surface-2', surface3: '--surface-3',
     sectionBg: '--section-bg',
     cardBg: '--card-bg', contentBg: '--content-bg', detailBg: '--detail-bg',
@@ -57,25 +59,29 @@
 
   var THEME_COLOR_KEYS = Object.keys(THEME_CSS_MAP).filter(function (k) { return k !== 'font' && k !== 'mono'; });
 
-  // ── Brand logo swap helper (PR #1137) ──
-  // The default navbar brand logo is an inline <svg class="brand-logo"> so it
-  // inherits page CSS vars (--logo-text / --logo-accent / etc.). When an
-  // operator overrides branding.logoUrl in the customizer they expect a
-  // remote image — swap the inline <svg> for an <img>. Going back to the
-  // default URL or clearing the override swaps the <img> back to the inline
-  // <svg>. Layout dimensions (width=111 height=36) are preserved either way.
+  // Keep the original marks so clearing an operator logo restores the brand
+  // immediately, including the existing packet indicators on desktop/mobile.
+  var _brandLogoDefaults = {};
   function _setBrandLogoUrl(url, alt) {
-    var node = document.querySelector('.nav-brand .brand-logo');
-    if (!node) return;
-    if (url) {
+    ['brand-logo', 'brand-mark-only'].forEach(function (className) {
+      var node = document.querySelector('.nav-brand .' + className);
+      if (!node) return;
+      if (!_brandLogoDefaults[className]) _brandLogoDefaults[className] = node.cloneNode(true);
+      if (!url) {
+        if (node.tagName.toLowerCase() === 'img') {
+          var restored = _brandLogoDefaults[className].cloneNode(true);
+          if (node.classList.contains('logo-disconnected')) restored.classList.add('logo-disconnected');
+          node.parentNode.replaceChild(restored, node);
+        }
+        return;
+      }
       if (node.tagName.toLowerCase() === 'img') {
         node.setAttribute('src', url);
         if (alt != null) node.setAttribute('alt', alt);
         return;
       }
-      // swap inline <svg> → <img>
       var img = document.createElement('img');
-      img.className = 'brand-logo';
+      img.className = node.className.baseVal || node.className;
       img.setAttribute('src', url);
       img.setAttribute('alt', alt || node.getAttribute('aria-label') || 'Brand');
       // #1450 — DO NOT set width/height attrs. CSS img.brand-logo handles
@@ -83,18 +89,7 @@
       // natural image aspect ratio is preserved instead of being squished
       // into the default SVG's 125x36 pill box.
       node.parentNode.replaceChild(img, node);
-    } else {
-      if (node.tagName.toLowerCase() !== 'img') {
-        if (alt != null) node.setAttribute('aria-label', alt);
-        return;
-      }
-      // swap <img> → inline <svg> by clearing the src; here we just keep the
-      // <img> in place because we don't have the SVG markup at runtime
-      // (it lives in index.html). The next page reload restores the inline
-      // SVG. Setting src to the default URL is a graceful intermediate.
-      node.setAttribute('src', 'img/corescope-logo.svg');
-      if (alt != null) node.setAttribute('alt', alt);
-    }
+    });
   }
   function _setBrandAlt(alt) {
     var node = document.querySelector('.nav-brand .brand-logo');
@@ -124,23 +119,66 @@
   // ── Presets (copied from v1 customize.js) ──
   var PRESETS = {
     default: {
-      name: 'Default', desc: 'MeshCore blue',
-      preview: ['#4a9eff', '#0f0f23', '#f4f5f7', '#1a1a2e', '#22c55e'],
-      theme: {
-        accent: '#4a9eff', navBg: '#0f0f23', navText: '#ffffff', background: '#f4f5f7', text: '#1a1a2e',
-        statusGreen: '#22c55e', statusYellow: '#eab308', statusRed: '#ef4444',
-        accentHover: '#6db3ff', navBg2: '#1a1a2e', navTextMuted: '#cbd5e1', navActiveBg: 'rgba(74,158,255,0.15)', textMuted: '#5b6370', border: '#e2e5ea',
-        surface1: '#ffffff', surface2: '#ffffff', cardBg: '#ffffff', contentBg: '#f4f5f7',
-        detailBg: '#ffffff', inputBg: '#ffffff', rowStripe: '#f9fafb', rowHover: '#eef2ff', selectedBg: '#dbeafe',
-        surface3: '#ffffff', sectionBg: '#eef2ff'
+      "name": "Canadaverse",
+      "desc": "Cyan signals / forest black",
+      "preview": [
+        "#020706",
+        "#18b7ff",
+        "#9cff38",
+        "#effff7",
+        "#39ff88"
+      ],
+      "theme": {
+        "accent": "#076a8c",
+        "accentHover": "#085776",
+        "navBg": "#e9f3ed",
+        "navBg2": "#dfeee7",
+        "navText": "#122b22",
+        "navTextMuted": "#446355",
+        "background": "#f3f8f5",
+        "text": "#122b22",
+        "textMuted": "#446355",
+        "border": "#adc7bc",
+        "surface1": "#ffffff",
+        "surface2": "#e9f3ed",
+        "surface3": "#dfeee7",
+        "sectionBg": "#e9f3ed",
+        "cardBg": "#ffffff",
+        "contentBg": "#f3f8f5",
+        "detailBg": "#ffffff",
+        "inputBg": "#ffffff",
+        "rowStripe": "#edf5ef",
+        "rowHover": "#e4f0ea",
+        "selectedBg": "#d3eaf2",
+        "statusGreen": "#19713b",
+        "statusYellow": "#795700",
+        "statusRed": "#b4233d"
       },
-      themeDark: {
-        accent: '#4a9eff', navBg: '#0f0f23', navText: '#ffffff', background: '#0f0f23', text: '#e2e8f0',
-        statusGreen: '#22c55e', statusYellow: '#eab308', statusRed: '#ef4444',
-        accentHover: '#6db3ff', navBg2: '#1a1a2e', navTextMuted: '#cbd5e1', navActiveBg: 'rgba(74,158,255,0.18)', textMuted: '#a8b8cc', border: '#334155',
-        surface1: '#1a1a2e', surface2: '#232340', cardBg: '#1a1a2e', contentBg: '#0f0f23',
-        detailBg: '#232340', inputBg: '#1e1e34', rowStripe: '#1e1e34', rowHover: '#2d2d50', selectedBg: '#1e3a5f',
-        surface3: '#2d2d50', sectionBg: '#1e1e34'
+      "themeDark": {
+        "accent": "#18b7ff",
+        "accentHover": "#65d1ff",
+        "navBg": "#020706",
+        "navBg2": "#091713",
+        "navText": "#effff7",
+        "navTextMuted": "#87aa9b",
+        "background": "#020706",
+        "text": "#effff7",
+        "textMuted": "#87aa9b",
+        "border": "#24483c",
+        "surface1": "#06100e",
+        "surface2": "#091713",
+        "surface3": "#10271e",
+        "sectionBg": "#091713",
+        "cardBg": "#06100e",
+        "contentBg": "#020706",
+        "detailBg": "#091713",
+        "inputBg": "#06100e",
+        "rowStripe": "#091713",
+        "rowHover": "#10271e",
+        "selectedBg": "#123c45",
+        "statusGreen": "#39ff88",
+        "statusYellow": "#ffd84d",
+        "statusRed": "#ff7187"
       }
     },
     ocean: {
@@ -793,8 +831,8 @@
         var brandEl = document.querySelector('.brand-text');
         if (brandEl) brandEl.textContent = br.siteName;
       }
+      _setBrandLogoUrl(br.logoUrl || '', br.siteName || null);
       if (br.logoUrl) {
-        _setBrandLogoUrl(br.logoUrl, br.siteName || null);
         var iconEl = document.querySelector('.brand-icon');
         if (iconEl) iconEl.innerHTML = '<img src="' + br.logoUrl + '" style="height:24px" onerror="this.style.display=\'none\'">';
       }
@@ -1077,6 +1115,9 @@
   var _gfPolygon = null;
   var _gfClosingLine = null;
   var _gfLoaded = false; // true after initial server load
+  var _gfServer = null; // last /config/geo-filter answer (writeEnabled)
+  var _gfContainer = null; // panel of the open geofilter tab, for auth changes
+  var _gfAuthListening = false;
 
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
   function escAttr(s) { return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
@@ -1749,7 +1790,7 @@
           '<label style="font-size:12px;color:var(--text-muted)">Buffer km:</label>' +
           '<input type="number" id="cv2-gf-buffer" value="20" min="0" max="500" style="width:64px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);font-size:12px">' +
         '</div>' +
-        '<div class="cust-field"><label>Server API Key</label>' +
+        '<div class="cust-field" id="cv2-gf-apikey-field"><label>Server API Key</label>' +
           '<input type="password" id="cv2-gf-apikey" placeholder="apiKey from config.json" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--input-bg);color:var(--text);font-size:12px">' +
         '</div>' +
         '<div style="display:flex;gap:8px;margin-top:12px">' +
@@ -1944,33 +1985,84 @@
     el.style.color = ok ? 'var(--status-green)' : 'var(--status-red)';
   }
 
+  // Optional user management: a logged-in admin's session (cookie + CSRF
+  // header) replaces the API key. Returns null when neither is available.
+  function _gfAuthHeaders(container, base, csAuth) {
+    var h = Object.assign({}, base || {});
+    if (csAuth && csAuth.isAdmin()) return Object.assign(h, csAuth.adminHeaders());
+    var apiKey = (container.querySelector('#cv2-gf-apikey') || {}).value || '';
+    if (!apiKey) return null;
+    h['X-API-Key'] = apiKey;
+    return h;
+  }
+
+  // The editor is usable with a write-capable API key (gf.writeEnabled) or an
+  // admin session (server: requireAdmin accepts both).
+  function _gfCanEdit(gf, csAuth) {
+    return !!((gf && gf.writeEnabled) || (csAuth && csAuth.isAdmin()));
+  }
+
+  // Shows or hides the edit controls, the prune section (needs a polygon)
+  // and the API-key field (not needed with an admin session) for the
+  // current auth state. Runs after the server answer, after CSAuth.ready()
+  // and on every 'cs-auth-changed', so a later login or logout is applied.
+  function _gfApplyAuth(container, gf, csAuth, pointCount) {
+    var canEdit = _gfCanEdit(gf, csAuth);
+    _gfWriteEnabled = canEdit;
+    var editEl = container.querySelector('#cv2-gf-edit');
+    if (editEl) editEl.style.display = canEdit ? '' : 'none';
+    var pruneEl = container.querySelector('#cv2-gf-prune-section');
+    if (pruneEl) pruneEl.style.display = canEdit && pointCount >= 3 ? '' : 'none';
+    var keyField = container.querySelector('#cv2-gf-apikey-field');
+    if (keyField) keyField.hidden = !!(csAuth && csAuth.isAdmin());
+    return canEdit;
+  }
+
+  // Re-applies access on a cached re-render or an auth change. Only with
+  // user management on: with it off the tab behaves exactly as before (the
+  // controls are decided once, by the first server answer). The prune
+  // section follows the saved server polygon, not unsaved drawing.
+  function _gfReapply(container, gf, csAuth) {
+    if (!(csAuth && csAuth.isEnabled())) return false;
+    var saved = gf && gf.polygon ? gf.polygon.length : 0;
+    _gfApplyAuth(container, gf, csAuth, saved);
+    return true;
+  }
+
+  function _gfReapplyAuth() {
+    // Only once the server answered: after a failed load nothing is editable.
+    if (_gfContainer && _gfServer) _gfReapply(_gfContainer, _gfServer, window.CSAuth);
+  }
+
   function _gfSave(container) {
     if (_gfPoints.length < 3) { _gfMsg(container, 'Need at least 3 polygon points.', false); return; }
-    var apiKey = (container.querySelector('#cv2-gf-apikey') || {}).value || '';
-    if (!apiKey) { _gfMsg(container, 'API key required to save.', false); return; }
+    var headers = _gfAuthHeaders(container, { 'Content-Type': 'application/json' }, window.CSAuth);
+    if (!headers) { _gfMsg(container, 'API key required to save.', false); return; }
     var bufferKm = parseFloat((container.querySelector('#cv2-gf-buffer') || {}).value) || 0;
     fetch('/api/config/geo-filter', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      headers: headers,
       body: JSON.stringify({ polygon: _gfPoints, bufferKm: bufferKm })
     }).then(function (r) {
       if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
+      if (_gfServer) _gfServer = Object.assign({}, _gfServer, { polygon: _gfPoints.slice() });
       _gfMsg(container, 'Saved. Filter is active immediately.', true);
       _gfStatus(container, _gfPoints.length + ' points · bufferKm=' + bufferKm + ' · saved');
     }).catch(function (e) { _gfMsg(container, 'Error: ' + e.message, false); });
   }
 
   function _gfRemove(container) {
-    var apiKey = (container.querySelector('#cv2-gf-apikey') || {}).value || '';
-    if (!apiKey) { _gfMsg(container, 'API key required.', false); return; }
+    var headers = _gfAuthHeaders(container, { 'Content-Type': 'application/json' }, window.CSAuth);
+    if (!headers) { _gfMsg(container, 'API key required.', false); return; }
     if (!confirm('Remove geo filter? All nodes will be allowed through.')) return;
     fetch('/api/config/geo-filter', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      headers: headers,
       body: JSON.stringify({ polygon: null })
     }).then(function (r) {
       if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
       _gfPoints = []; _gfLoaded = true;
+      if (_gfServer) _gfServer = Object.assign({}, _gfServer, { polygon: null });
       _gfRender();
       _gfStatus(container, 'No geo filter. Click the map to draw a polygon.');
       _gfMsg(container, 'Geo filter removed.', true);
@@ -1988,13 +2080,13 @@
   }
 
   function _gfPrunePreview(container) {
-    var apiKey = (container.querySelector('#cv2-gf-apikey') || {}).value || '';
-    if (!apiKey) { _gfPruneMsg(container, 'API key required.', false); return; }
+    var headers = _gfAuthHeaders(container, {}, window.CSAuth);
+    if (!headers) { _gfPruneMsg(container, 'API key required.', false); return; }
     var btn = container.querySelector('#cv2-gf-prune-preview');
     if (btn) btn.textContent = 'Loading…';
     fetch('/api/admin/prune-geo-filter', {
       method: 'POST',
-      headers: { 'X-API-Key': apiKey }
+      headers: headers
     }).then(function (r) {
       if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
       return r.json();
@@ -2013,7 +2105,7 @@
       }
       listEl.innerHTML = _gfPruneNodes.map(function (n) {
         var coords = n.lat != null ? (' · ' + n.lat.toFixed(4) + ', ' + n.lon.toFixed(4)) : '';
-        return '<div>' + (n.name || n.pubkey.slice(0, 12)) + coords + '</div>';
+        return '<div>' + esc(n.name || n.pubkey.slice(0, 12)) + coords + '</div>';
       }).join('');
       confirmBtn.textContent = 'Delete ' + count + ' node' + (count !== 1 ? 's' : '');
       resultEl.style.display = '';
@@ -2026,14 +2118,14 @@
 
   function _gfPruneConfirm(container) {
     if (!_gfPruneNodes.length) { _gfPruneMsg(container, 'Run preview first.', false); return; }
-    var apiKey = (container.querySelector('#cv2-gf-apikey') || {}).value || '';
-    if (!apiKey) { _gfPruneMsg(container, 'API key required.', false); return; }
+    var headers = _gfAuthHeaders(container, { 'Content-Type': 'application/json' }, window.CSAuth);
+    if (!headers) { _gfPruneMsg(container, 'API key required.', false); return; }
     var count = _gfPruneNodes.length;
     if (!confirm('Delete ' + count + ' node' + (count !== 1 ? 's' : '') + ' from the database? This cannot be undone.')) return;
     var pubkeys = _gfPruneNodes.map(function (n) { return n.pubkey; });
     fetch('/api/admin/prune-geo-filter?confirm=true', {
       method: 'POST',
-      headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+      headers: headers,
       body: JSON.stringify({ pubkeys: pubkeys })
     }).then(function (r) {
       if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || ('HTTP ' + r.status)); });
@@ -2060,27 +2152,22 @@
 
     if (!_gfLoaded) {
       api('/config/geo-filter', { ttl: 0 }).then(function (gf) {
-        // Show edit controls only on servers that have a write-capable API key configured
-        if (gf && gf.writeEnabled) {
-          _gfWriteEnabled = true;
-          var editEl = container.querySelector('#cv2-gf-edit');
-          if (editEl) editEl.style.display = '';
-        }
+        _gfServer = gf;
         if (gf && gf.polygon && gf.polygon.length >= 3) {
           _gfPoints = gf.polygon.map(function (p) { return [p[0], p[1]]; });
+        } else {
+          _gfPoints = [];
+        }
+        // Edit controls need a write-capable API key on the server or an admin session.
+        var canEdit = _gfApplyAuth(container, gf, window.CSAuth, _gfPoints.length);
+        if (_gfPoints.length >= 3) {
           var buf = container.querySelector('#cv2-gf-buffer');
           if (buf) buf.value = gf.bufferKm || 0;
           _gfRender();
           if (_gfPolygon) _gfMap.fitBounds(_gfPolygon.getBounds(), { padding: [20, 20] });
           _gfStatus(container, gf.polygon.length + ' points · bufferKm=' + (gf.bufferKm || 0));
-          // Show prune section when a polygon is active and write access is available
-          if (gf.writeEnabled) {
-            var pruneEl = container.querySelector('#cv2-gf-prune-section');
-            if (pruneEl) pruneEl.style.display = '';
-          }
         } else {
-          _gfPoints = [];
-          _gfStatus(container, gf && gf.writeEnabled ? 'No geo filter. Click the map to open the editor.' : 'No geo filter configured.');
+          _gfStatus(container, canEdit ? 'No geo filter. Click the map to open the editor.' : 'No geo filter configured.');
           _gfMap.setView([50.5, 4.4], 5);
         }
         _gfLoaded = true;
@@ -2101,7 +2188,17 @@
         _gfStatus(container, _gfPoints.length ? _gfPoints.length + ' points (need at least 3).' : 'Click the map to draw a polygon.');
         _gfRender();
       }
+      if (_gfServer) _gfReapply(container, _gfServer, window.CSAuth);
       setTimeout(function () { if (_gfMap) _gfMap.invalidateSize(); }, 100);
+    }
+
+    // The tab can open before /api/auth/me answers, and a login or logout
+    // can follow without a reload: re-evaluate the editor on both.
+    _gfContainer = container;
+    if (window.CSAuth) CSAuth.ready().then(_gfReapplyAuth);
+    if (!_gfAuthListening) {
+      _gfAuthListening = true;
+      window.addEventListener('cs-auth-changed', _gfReapplyAuth);
     }
 
     _gfMap.on('click', function () { _gfOpenModal(container); });
@@ -2911,6 +3008,8 @@
     readOverrides: readOverrides,
     writeOverrides: writeOverrides,
     computeEffective: computeEffective,
+    // Settings sync (settings-sync.js) re-applies overrides that arrived from the account.
+    runPipeline: _runPipeline,
     setOverride: setOverride,
     clearOverride: clearOverride,
     migrateOldKeys: migrateOldKeys,
@@ -2919,6 +3018,10 @@
     isValidColor: isValidColor,
     isValidHomeUrl: isValidHomeUrl,
     isOverridden: _isOverridden,
+    _gfCanEdit: _gfCanEdit,
+    _gfAuthHeaders: _gfAuthHeaders,
+    _gfApplyAuth: _gfApplyAuth,
+    _gfReapply: _gfReapply,
     // #1496 — full reset (not just STORAGE_KEY). See _resetAll() above.
     resetAll: _resetAll,
     // Exposed for tests — see test-issue-1509-detect-preset.js.

@@ -5,9 +5,48 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"runtime"
 	"time"
 
 	"github.com/meshcore-analyzer/dbschema"
+)
+
+// pruneBatchTransmissions bounds how many transmissions (and their child
+// observations) one prune transaction deletes before it commits and
+// releases the writer lock.
+//
+// Releasing between batches is the entire point. writerMu serialises every
+// wrapped writer call, so while the prune holds it the MQTT ingest path is
+// blocked. Go's sync.Mutex switches to FIFO handoff once a waiter has been
+// blocked for 1ms (starvation mode), so an ingest goroutine queued behind
+// the prune is served at the next batch boundary instead of after the whole
+// retention day.
+//
+// The bound is on transmissions, but hold time scales with the rows actually
+// deleted, and each transmission carries an unbounded number of observations.
+// At ~16 observations per transmission a batch is ~4k row deletes and a few
+// hundred milliseconds; an instance with a denser observation ratio gets a
+// proportionally longer hold from the same batch size. 250 also keeps the
+// commit count low (a 16k-transmission day is 64 transactions, not 16k).
+const pruneBatchTransmissions = 250
+
+// pruneAgedTransmissionIDs selects the next batch of transmissions older than
+// the cutoff. Both statements of a batch embed it, so they resolve the same
+// set: nothing modifies `transmissions` between them inside the transaction.
+//
+// The ORDER BY must be satisfiable from idx_transmissions_first_seen. That
+// PostgreSQL index explicitly includes id as the tiebreaker (SQLite carried
+// its rowid implicitly). This lets the LIMIT stop the ordered scan even when
+// timestamps tie. Ordering by id alone could scan the entire table when no
+// rows have aged out. TestPruneAgedTransmissionIDsHasOrderedIndex pins ordered
+// index eligibility for both the batch query and its DELETE callers.
+const pruneAgedTransmissionIDs = `SELECT id FROM transmissions WHERE first_seen < $1 ORDER BY first_seen, id LIMIT $2`
+
+// The two statements of one prune batch. Child observations go first, retaining
+// the bounded deletion behavior of the SQLite implementation.
+const (
+	pruneObservationsBatch  = `DELETE FROM observations WHERE transmission_id IN (` + pruneAgedTransmissionIDs + `)`
+	pruneTransmissionsBatch = `DELETE FROM transmissions WHERE id IN (` + pruneAgedTransmissionIDs + `)`
 )
 
 // PruneOldPackets deletes transmissions (and their child observations)
@@ -16,36 +55,56 @@ import (
 // Owned by the ingestor per #1283: the writer process is the only one
 // allowed to hold the DB write lock; previously this lived in
 // cmd/server/db.go and raced ingestor INSERTs (SQLITE_BUSY).
+//
+// Deletion is chunked into bounded transactions so ingest is never blocked
+// for longer than a single batch. Deleting a whole retention day in one
+// transaction held the writer lock for ~35s on a mesh doing ~260k
+// observations/day, stalling MQTT ingest for the same duration.
+//
+// On error the transmissions deleted by already-committed batches are
+// returned alongside it — those rows are gone, so reporting 0 would be
+// wrong.
 func (s *Store) PruneOldPackets(days int) (int64, error) {
+	return s.pruneOldPackets(days, runtime.Gosched)
+}
+func (s *Store) pruneOldPackets(days int, betweenBatches func()) (int64, error) {
 	if days <= 0 {
 		return 0, nil
 	}
 	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format(time.RFC3339)
 
-	// Tagged for writer-perf visibility (#1340).
-	var n int64
-	err := s.WriterTx("prune_packets", func(tx *sql.Tx) error {
-		// Delete child observations first (no CASCADE in SQLite).
-		if _, err := tx.Exec(`DELETE FROM observations WHERE transmission_id IN (
-			SELECT id FROM transmissions WHERE first_seen < ?
-		)`, cutoff); err != nil {
-			return fmt.Errorf("prune observations: %w", err)
-		}
-
-		res, err := tx.Exec(`DELETE FROM transmissions WHERE first_seen < ?`, cutoff)
+	var total int64
+	for {
+		var batch int64
+		// Tagged for writer-perf visibility (#1340).
+		err := s.WriterTx("prune_packets", func(tx *sql.Tx) error {
+			if _, err := tx.Exec(pruneObservationsBatch, cutoff, pruneBatchTransmissions); err != nil {
+				return fmt.Errorf("prune observations: %w", err)
+			}
+			res, err := tx.Exec(pruneTransmissionsBatch, cutoff, pruneBatchTransmissions)
+			if err != nil {
+				return fmt.Errorf("prune transmissions: %w", err)
+			}
+			batch, _ = res.RowsAffected()
+			return nil
+		})
 		if err != nil {
-			return fmt.Errorf("prune transmissions: %w", err)
+			return total, err
 		}
-		n, _ = res.RowsAffected()
-		return nil
-	})
-	if err != nil {
-		return 0, err
+		total += batch
+		// A short batch proves nothing is left below the cutoff: the subquery
+		// found fewer rows than it was allowed to take. Only a batch that came
+		// back exactly full needs another pass.
+		if batch < pruneBatchTransmissions {
+			break
+		}
+		// Yield only after the transaction commits and releases the writer.
+		betweenBatches()
 	}
-	if n > 0 {
-		log.Printf("[prune] deleted %d transmissions older than %d days", n, days)
+	if total > 0 {
+		log.Printf("[prune] deleted %d transmissions older than %d days", total, days)
 	}
-	return n, nil
+	return total, nil
 }
 
 // PruneOldClientReceptions deletes mobile client-RX coverage rows older than
@@ -61,13 +120,13 @@ func (s *Store) PruneOldClientReceptions(days int) (int64, error) {
 
 	var n int64
 	err := s.WriterTx("prune_client_receptions", func(tx *sql.Tx) error {
-		res, err := tx.Exec(`DELETE FROM client_receptions WHERE rx_at < ?`, cutoff)
+		res, err := tx.Exec(`DELETE FROM client_receptions WHERE rx_at < `+s.parameter(1), cutoff)
 		if err != nil {
 			return fmt.Errorf("prune client_receptions: %w", err)
 		}
 		n, _ = res.RowsAffected()
 		// Drop companion name rows not refreshed within the window.
-		if _, err := tx.Exec(`DELETE FROM client_observers WHERE last_seen < ?`, cutoff); err != nil {
+		if _, err := tx.Exec(`DELETE FROM client_observers WHERE last_seen < `+s.parameter(1), cutoff); err != nil {
 			return fmt.Errorf("prune client_observers: %w", err)
 		}
 		return nil
@@ -93,7 +152,7 @@ func (s *Store) PruneOldClientRxObservations(days int) (int64, error) {
 		return 0, nil
 	}
 	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format(rxTimeMillisLayout)
-	res, err := s.db.Exec(`DELETE FROM client_rx_observations WHERE rx_at < ?`, cutoff)
+	res, err := s.db.Exec(`DELETE FROM client_rx_observations WHERE rx_at < `+s.parameter(1), cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("prune client_rx_observations: %w", err)
 	}
@@ -116,7 +175,7 @@ func (s *Store) PruneOldClientRfSamples(days int) (int64, error) {
 		return 0, nil
 	}
 	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format(rxTimeMillisLayout)
-	res, err := s.db.Exec(`DELETE FROM client_rf_samples WHERE sampled_at < ?`, cutoff)
+	res, err := s.db.Exec(`DELETE FROM client_rf_samples WHERE sampled_at < `+s.parameter(1), cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("prune client_rf_samples: %w", err)
 	}
@@ -124,6 +183,41 @@ func (s *Store) PruneOldClientRfSamples(days int) (int64, error) {
 	if n > 0 {
 		log.Printf("[prune] deleted %d client_rf_samples older than %d days", n, days)
 	}
+	return n, nil
+}
+
+// PruneOldClientDeclaredRegions deletes declared-region observation rows
+// (node_declared_regions) older than `days` (by observed_at). Independent of
+// clientRxDays/clientRxObsDays/clientRfDays. 0 disables. Owned by the
+// ingestor writer (#1283). observed_at on this table is stored at
+// millisecond precision via rxTimeMillisLayout, not RFC3339 — the cutoff
+// must be formatted the same way so lexicographic comparison against
+// stored values stays correct.
+func (s *Store) PruneOldClientDeclaredRegions(days int) (int64, error) {
+	if days <= 0 {
+		return 0, nil
+	}
+	n, err := s.pruneOldClientDeclaredRegionsAt(time.Now().UTC().AddDate(0, 0, -days))
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		log.Printf("[prune] deleted %d node_declared_regions older than %d days", n, days)
+	}
+	return n, nil
+}
+
+// pruneOldClientDeclaredRegionsAt is the cutoff-instant seam behind
+// PruneOldClientDeclaredRegions: it exists so tests can pin the cutoff
+// deterministically instead of racing time.Now() to place a fixture row on a
+// specific side of it.
+func (s *Store) pruneOldClientDeclaredRegionsAt(cutoffInstant time.Time) (int64, error) {
+	cutoff := cutoffInstant.Format(rxTimeMillisLayout)
+	res, err := s.db.Exec(`DELETE FROM node_declared_regions WHERE observed_at < `+s.parameter(1), cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune node_declared_regions: %w", err)
+	}
+	n, _ := res.RowsAffected()
 	return n, nil
 }
 
@@ -149,7 +243,7 @@ func (s *Store) PruneNeighborEdges(maxAgeDays int) (int64, error) {
 		return 0, nil
 	}
 	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeDays) * 24 * time.Hour).Format(time.RFC3339)
-	res, err := s.db.Exec("DELETE FROM neighbor_edges WHERE last_seen < ?", cutoff)
+	res, err := s.db.Exec("DELETE FROM neighbor_edges WHERE last_seen < "+s.parameter(1), cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("prune neighbor_edges: %w", err)
 	}
@@ -211,7 +305,7 @@ func (s *Store) BackfillFromPubkey(chunkSize int, yieldDuration time.Duration, p
 	}
 	log.Printf("[backfill] from_pubkey starting: %d ADVERT rows", total)
 
-	stmt, err := s.db.Prepare("UPDATE transmissions SET from_pubkey = ? WHERE id = ?")
+	stmt, err := s.db.Prepare("UPDATE transmissions SET from_pubkey = " + s.parameter(1) + " WHERE id = " + s.parameter(2))
 	if err != nil {
 		log.Printf("[backfill] from_pubkey prepare: %v", err)
 		return
@@ -221,7 +315,7 @@ func (s *Store) BackfillFromPubkey(chunkSize int, yieldDuration time.Duration, p
 	var processed int64
 	for {
 		rows, err := s.db.Query(
-			"SELECT id, decoded_json FROM transmissions WHERE from_pubkey IS NULL AND payload_type = 4 LIMIT ?",
+			"SELECT id, decoded_json FROM transmissions WHERE from_pubkey IS NULL AND payload_type = 4 LIMIT "+s.parameter(1),
 			chunkSize)
 		if err != nil {
 			log.Printf("[backfill] from_pubkey select: %v", err)
@@ -245,7 +339,7 @@ func (s *Store) BackfillFromPubkey(chunkSize int, yieldDuration time.Duration, p
 			break
 		}
 
-		tx, err := s.db.Begin()
+		tx, err := beginWrite(s.db, s.Backend())
 		if err != nil {
 			log.Printf("[backfill] from_pubkey begin tx: %v", err)
 			return

@@ -137,6 +137,7 @@
   --palette-green-500: #22c55e;
   --palette-green-600: #16a34a;
   --palette-green-700: #15803d;
+  --palette-green-800: #166534;
 
   --palette-amber-300: #fcd34d;
   --palette-amber-400: #fbbf24;
@@ -256,6 +257,19 @@
      theme overrides keep the bright #22c55e since it reads ≥6:1 on the
      card-bg #232340. */
   --status-green-text: var(--palette-green-700, #15803d);
+  /* #1996: the scope-audit observed/verified chips tint their own
+     background, which darkens it enough that green-700 fails 4.5:1. One
+     step darker clears it with margin (6.23:1 on white, 5.74:1 on
+     --surface-0) without thinning the tint that makes the chip legible. */
+  --sa-chip-observed-fg: var(--palette-green-800, #166534);
+  /* Green status words in the admin/user tables: green-700 is 4.48:1 on the
+     row-hover tint #eef2ff, green-800 is 6.4:1 there. Dark keeps the bright hue. */
+  --status-green-tint-text: var(--palette-green-800, #166534);
+  /* Text-only yellow/red for surfaces that print status words on light cards
+     (user-management chips): yellow-800 #854d0e is 6.85:1 on #fff and 6.13:1 on the row-hover tint #eef2ff (yellow-700 #a16207 was 4.4:1 there); red-700 #b91c1c
+     is 6.47:1 on #fff. Dark theme keeps the bright hues, like green-text. */
+  --status-yellow-text: #854d0e;
+  --status-red-text: var(--palette-red-700, #b91c1c);
   --status-yellow: #eab308;
   --status-red: #ef4444;
   --status-orange: #f97316;
@@ -386,8 +400,13 @@
     /* #1719 — on dark card-bg (#232340) #22c55e gives 6.65:1, AA pass.
        Keep the bright hue for text rather than darkening it. */
     --status-green-text: #22c55e;
+    /* #1996: dark already passes at 6.48:1 — keep the bright hue. */
+    --sa-chip-observed-fg: #22c55e;
+    --status-green-tint-text: #22c55e;
     /* #1719 — keep --skew-badge-no-clock-bg dark enough for #fff text. */
     --skew-badge-no-clock-bg: var(--palette-gray-600, #4b5563);
+    --status-yellow-text: #eab308;
+    --status-red-text: var(--palette-red-400, #f87171);
     --status-yellow: #eab308;
     --status-red: #ef4444;
     --status-orange: #f97316;
@@ -451,7 +470,12 @@
   --status-green: #22c55e;
   /* #1719 — see :root[prefers-color-scheme:dark] block; mirror here. */
   --status-green-text: #22c55e;
+  /* #1996: dark already passes at 6.48:1 — keep the bright hue. */
+  --sa-chip-observed-fg: #22c55e;
+  --status-green-tint-text: #22c55e;
   --skew-badge-no-clock-bg: var(--palette-gray-600, #4b5563);
+  --status-yellow-text: #eab308;
+  --status-red-text: var(--palette-red-400, #f87171);
   --status-yellow: #eab308;
   --status-red: #ef4444;
   --status-orange: #f97316;
@@ -518,8 +542,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 /* === Touch Targets === */
-/* WCAG 2.5.5 / Apple HIG / Material: 48x48 CSS px minimum touch target for
-   all interactive controls. Targets are achieved with min-height/min-width
+/* House preference: 48x48 CSS px minimum for the controls below (#2052),
+   above WCAG 2.5.5's 44x44 minimum. Targets use min-height/min-width
    plus inline-flex centering so existing visual styling (font-size, padding,
    icon size) is preserved on desktop while the *hit area* grows for touch.
    Issue #1060.
@@ -608,8 +632,7 @@ button.ch-item {
 }
 
 /* Additional button-like controls discovered during PR #1067 review (Issue
-   #1060 follow-up). Same 48x48 minimums + touch-action so all interactive
-   surfaces meet WCAG 2.5.5. */
+   #1060 follow-up). Same 48x48 house minimums + touch-action. */
 .btn-link,
 .col-toggle-btn,
 .filter-toggle-btn,
@@ -890,7 +913,7 @@ img.brand-logo {
 .nav-btn {
   background: none; border: 1px solid var(--border); color: var(--nav-text-muted); padding: 6px 12px;
   border-radius: 6px; cursor: pointer; font-size: 14px; transition: all .15s;
-  min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
+  display: inline-flex; align-items: center; justify-content: center;
 }
 .nav-btn:hover { background: var(--nav-bg2); color: var(--nav-text); }
 
@@ -1058,6 +1081,17 @@ img.brand-logo {
   box-shadow: 0 4px 12px rgba(0,0,0,.3); pointer-events: none;
 }
 .sort-help:hover .sort-help-tip { display: block; }
+.node-packet-count-help {
+  border: 0; padding: 0; background: none; color: inherit; font: inherit;
+  text-align: left; text-transform: inherit; letter-spacing: inherit;
+}
+.node-packet-count-help .sort-help-tip {
+  top: auto; bottom: 100%; left: 0; transform: none; pointer-events: auto;
+  font-weight: normal; text-transform: none; letter-spacing: normal;
+}
+.node-packet-count-help.help-dismissed .sort-help-tip { display: none; }
+/* Avoid touch target expansion redirecting nearby table-cell taps into the help button. */
+.node-packet-count-help.help-touch .sort-help-tip { pointer-events: none; }
 .filter-bar .btn:hover { background: var(--row-hover); }
 .filter-bar .btn.active { background: var(--accent-strong); color: var(--text-on-accent); border-color: var(--accent-strong); }
 .filter-bar .col-toggle-btn { height: 34px; min-height: 34px; }
@@ -1102,6 +1136,30 @@ img.brand-logo {
 .data-table td.col-expand {
   width: 32px; min-width: 32px; max-width: 32px;
   padding: 3px 4px; text-align: center;
+}
+
+/* Trailing action column (row buttons: neighbours "Map", analytics "View on
+ * map"). These columns carry an empty <th>, so they contribute nothing to the
+ * width distribution, and the global `.data-table td { max-width: 0 }` above
+ * zeroes their max-content contribution too — the auto table algorithm then
+ * hands them whatever is left over, which is routinely narrower than the
+ * button they contain, and `overflow: hidden` silently clips it. Measured on
+ * the node Neighbours table: 40px of column for a 53px button at a 1440px
+ * viewport, 12px in the 420px split panel — clipped on every row at every
+ * desktop width below ~2000px.
+ *
+ * `width: 1%` is the shrink-to-content idiom for auto-layout tables: the
+ * column takes its min-content width and the data columns absorb the rest.
+ * `max-width: none` opts back out of the zeroing; `overflow: visible` means a
+ * future miscalculation shows as a visible overhang rather than a silent crop.
+ */
+.data-table th.col-action,
+.data-table td.col-action {
+  width: 1%;
+  max-width: none;
+  overflow: visible;
+  white-space: nowrap;
+  text-align: right;
 }
 
 /* #1415 / #1458 / #1461 — mobile packets UX overhaul.
@@ -1557,6 +1615,25 @@ body.scroll-locked { overflow: hidden; }
  * abbreviated 7-char chips + arrow. .path-hops already uses 11px font, so
  * no chip-level font change is needed here. */
 .data-table td.col-path, .data-table th.col-path { min-width: 140px; }
+/* Packets columns are sized to their widest cell (fitColumnsToContent in
+ * app.js). Proportional digits make "20m ago" wider than "13m ago", so a
+ * column measured on one row clipped the next; fixed-width digits keep
+ * same-length values the same width. */
+#pktTable td.col-time, #pktTable td.col-size { font-variant-numeric: tabular-nums; }
+/* fitColumnsToContent sets every #pktTable column width in px. The shared
+ * min-width rules on .col-time (clamp 72-108px), .col-path (140px),
+ * .col-observer (70px) and .col-scope (56px) are written for auto-layout
+ * tables; Chromium ignores cell min-width under table-layout: fixed, other
+ * engines need not. Clear them here so the JS widths are the only input. */
+#pktTable th, #pktTable td { min-width: 0; }
+/* "Full Names" toggle (packets.js): hop chips keep their whole name. The
+ * path stays on one line; hops past the edge go behind the "+N" overflow
+ * pill (_finalizePathOverflow). Wrapping would make rows taller than the
+ * fixed VSCROLL_ROW_HEIGHT the virtual scroller positions rows with. No cap
+ * at all, not even 100%: a single name longer than the column must overflow
+ * so the pill (and its full-path popover) appears, rather than ellipsise
+ * inside its chip with no way to read it. */
+#pktTable.pkt-full-names .path-hops .hop-named { max-width: none; }
 .data-table td.col-path { height: 28px; line-height: 22px; overflow: hidden; }
 
 /* === Modal === */
@@ -1794,6 +1871,8 @@ button.ch-item.selected { background: var(--selected-bg); }
 }
 .ch-item-body { flex: 1; min-width: 0; }
 .ch-item-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+/* Keep both 48px actions inside narrow user-channel rows (#2052). */
+.ch-item.ch-user-added .ch-item-top { flex-wrap: wrap; }
 .ch-item-name { font-weight: 600; font-size: 14px; }
 .ch-item-time { font-size: 12px; font-weight: var(--fw-medium); color: var(--text-muted); white-space: nowrap; } /* #1668 M3 — was 11px/400 */
 .ch-unread-badge {
@@ -1810,12 +1889,12 @@ button.ch-item.selected { background: var(--selected-bg); }
   line-height: 1.4;
 }
 /* Shared icon button base for sidebar row controls (remove ✕, share ⤴). EMOJI-OK-COMMENT
-   WCAG 2.5.5 / Apple HIG: 44x44 CSS px minimum touch target. */
+   Inherits the shared 48x48 house minimum above. */
 .ch-icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
   background: none; border: none; color: var(--text-muted);
   cursor: pointer; padding: 4px; margin-left: 2px;
-  min-width: 44px; min-height: 44px; box-sizing: border-box;
+  box-sizing: border-box;
   opacity: 0.55; transition: opacity 0.15s, color 0.15s;
   line-height: 1; user-select: none;
 }
@@ -1834,6 +1913,7 @@ button.ch-item:hover .ch-icon-btn { opacity: 1; }
 .ch-remove-btn:hover, .ch-remove-btn:focus { background: #8b3838; color: white; }
 .ch-share-btn:hover,  .ch-share-btn:focus  { color: var(--link-color, #3b82f6); }
 .ch-user-badge { font-size: 12px; font-weight: var(--fw-medium); margin-left: 2px; opacity: 0.85; flex-shrink: 0; } /* #1668 M3 r1 — chip floor, mirror row chips (adv #2) */
+.ch-approved-badge { font-size: 11px; font-weight: var(--fw-medium); color: var(--text-muted); border: 1px solid var(--border); border-radius: 8px; padding: 0 6px; margin-left: 4px; flex-shrink: 0; }
 .ch-item-preview { font-size: 13px; font-weight: var(--fw-medium); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* #1668 M3 — was 12px/400 */
 
 .ch-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
@@ -2026,6 +2106,7 @@ button.ch-item:hover .ch-icon-btn { opacity: 1; }
 .btn-primary:hover { background: var(--accent-hover); }
 
 /* Advert Timeline */
+.node-advert-group h5 { margin: 8px 0; font-size: 12px; color: var(--text-muted); }
 .advert-entry {
   display: flex; align-items: flex-start; gap: 10px; padding: 8px 0;
   border-bottom: 1px solid var(--border);
@@ -2406,15 +2487,12 @@ button.ch-item:hover .ch-icon-btn { opacity: 1; }
   .ch-header-region .region-pill { padding: 2px 6px; font-size: 11px; }
   .ch-header-region .region-dropdown-trigger { padding: 3px 6px; font-size: 11px; }
 
-  /* Channel list row: name must dominate. The inline share/remove icons
-     were eating >88px because of their 44x44 touch target — push them
-     onto a per-row reveal pattern: show a single ⋮ trigger that toggles
-     the action set. Until then, shrink them to icon-only and let the
-     name grow via flex:1. */
+  /* Keep legacy channel rows compact without reducing the shared hit area.
+     The mobile chat-app renderer uses rows without inline action icons. */
   #chList .ch-item { padding: 10px 12px; gap: 10px; }
   #chList .ch-item-name { flex: 1 1 auto; min-width: 0; }
   #chList .ch-item-top { gap: 6px; }
-  #chList .ch-icon-btn { min-width: 32px; min-height: 32px; padding: 2px 4px; }
+  #chList .ch-icon-btn { padding: 2px 4px; }
   /* #1648 M5: share-btn now renders an inline <svg.ph-icon> from channels.js,
    * so the legacy `font-size: 0` + `::before { content: '<emoji>' }` shim is
    * obsolete. The icon-button class above already sets the touch target;
@@ -2535,11 +2613,15 @@ button.ch-item:hover .ch-icon-btn { opacity: 1; }
 
 /* === Grouped Packet Rows === */
 .group-header { cursor: pointer; font-weight: 600; }
-.group-header td:first-child::before { content: '▶ '; font-size: 10px; color: var(--link-color); transition: transform 0.15s; display: inline-block; }
-.group-header.expanded td:first-child::before { content: '▼ '; }
+/* The expand chevron is the SVG caret packets.js renders into td.col-expand;
+ * a text ::before glyph here drew a second arrow next to it. */
+.group-header td.col-expand { color: var(--link-color); }
 .group-header:hover { background: var(--row-hover); }
 .group-child { font-size: 12px; }
-.group-child td { padding-left: 20px; }
+/* Indent only the first data cell: indenting every cell pushed child rows
+ * out of line with the headers, and made each content-sized column measure
+ * 14px wider once a group was expanded. */
+.group-child td.col-time { padding-left: 20px; }
 .group-child.hidden { display: none; }
 
 /* === Reduced Motion === */
@@ -2669,6 +2751,10 @@ button.ch-item:hover .ch-icon-btn { opacity: 1; }
 .col-resize-handle:hover::after, .col-resize-handle.active::after {
   background: var(--accent); opacity: 0.6;
 }
+/* fitColumnsToContent: the last visible column takes whatever width is left,
+ * so it has nothing to resize against, and its handle (right: -4px) would
+ * overhang the table and scroll the wrapper sideways. */
+th.fit-last > .col-resize-handle { display: none; }
 
 /* Encrypted channels de-emphasized */
 button.ch-item.ch-item-encrypted { opacity: 0.5; }
@@ -3050,6 +3136,20 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 .hop-conflict-btn { background: var(--status-yellow, #f59e0b); color: #000; border: none; border-radius: 4px; font-size: 11px;
   font-weight: 700; padding: 1px 5px; cursor: pointer; vertical-align: middle; margin-left: 3px; line-height: 1.2; }
 .hop-conflict-btn:hover { background: var(--status-yellow, #d97706); filter: brightness(0.85); }
+
+/* #2097 — a badge is a sibling of its pill, so "A [8] -> B [6]" gave no clue
+   which name the 8 belonged to. The group ties the pair together and keeps the
+   separator outside it. Only hops that carry a badge are wrapped. */
+.hop-group { display: inline-flex; align-items: center; white-space: nowrap; }
+.hop-group .hop-conflict-btn,
+.hop-group .hop-unreliable-btn { margin-left: 2px; }
+
+/* One indicator for a whole path, used by the packets list. The detail pane
+   keeps a badge per hop, because that is where the candidates get read. */
+.hop-path-warn { display: inline-flex; align-items: center; gap: 2px; margin-right: 4px; flex: 0 0 auto;
+  background: var(--status-yellow, #f59e0b); color: #000; border-radius: 4px;
+  font-size: 11px; font-weight: 700; padding: 1px 5px; line-height: 1.2;
+  vertical-align: middle; white-space: nowrap; }
 .hop-conflict-popover { position: absolute; z-index: var(--z-popover); background: var(--surface-1); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); width: 260px; max-height: 300px; overflow-y: auto; }
 .hop-conflict-header { padding: 10px 12px; font-size: 12px; font-weight: 700; border-bottom: 1px solid var(--border);
@@ -3071,7 +3171,15 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 .hop-unreliable-btn { background: none; border: none; color: var(--status-yellow, #f59e0b); font-size: 13px;
   cursor: help; vertical-align: middle; margin-left: 2px; padding: 0 2px; line-height: 1; }
 .hop-global-fallback { border-bottom: 1px dashed var(--status-red); }
-.hop-current { font-weight: 700 !important; color: var(--link-color) !important; }
+.hop-current {
+  display: inline-block;
+  padding: 0 4px;
+  /* Outline preserves the shared renderer's dashed ambiguity border. */
+  outline: 1px solid var(--link-color);
+  border-radius: 4px;
+  font-weight: 700 !important;
+  color: var(--link-color) !important;
+}
 
 /* Self-loop subpath rows */
 .subpath-selfloop { opacity: 0.6; }
@@ -3274,6 +3382,38 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .map-controls.collapsed {
   display: none;
 }
+/* #1862: the active region filter, on the map itself, so it stays visible
+   while the controls panel is collapsed (the default on phones). Centred
+   between Leaflet's top-left controls and the top-right toggle. */
+.mc-region-chip {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 128px);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 12px;
+}
+.mc-region-chip[hidden] { display: none; }
+.mc-region-chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-region-chip-reset {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--link-color);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.mc-region-chip-reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .node-detail-map {
   height: 280px;
   min-height: 200px;
@@ -3284,7 +3424,7 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .node-top-row .node-qr-wrap { flex: 1; align-self: flex-start; min-width: 120px; max-width: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
 .node-top-row .node-qr-wrap .node-qr { margin-top: 0; }
 .node-qr-wrap--full { max-width: 240px; margin: 0 auto; }
-.node-stats-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 12px; }
+.node-stats-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; overflow: visible; margin-bottom: 12px; }
 .node-stats-table td { padding: 6px 12px; border-bottom: 1px solid var(--border); }
 .node-stats-table tr:last-child td { border-bottom: none; }
 .node-stats-table tr:nth-child(even) { background: var(--row-stripe); }
@@ -3366,6 +3506,11 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 }
 .analytics-chart-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: var(--space-sm); min-width: 0; }
 .analytics-chart-card.full { grid-column: 1 / -1; }
+/* Keep relay labels, percentage values and a visible track inside narrow cards. */
+.dumbbell-chart { container-type: inline-size; }
+@container (max-width: 480px) {
+  .dumbbell-row, .dumbbell-axis { --relay-airtime-columns: 70px minmax(20px, 1fr) 90px; }
+}
 /* Constrain chart media inside the card (svg/canvas at any depth). The
    `.analytics-chart-card svg, .analytics-chart-card canvas` descendant
    selector is robust to wrapper elements (legends, tooltips, axis
@@ -3520,6 +3665,16 @@ button.region-pill-active:hover { opacity: 0.85; color: var(--text-on-accent); }
   box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 4px 0; display: none;
 }
 .multi-select-menu.open { display: block; }
+.multi-select-search-wrap {
+  position: sticky; top: 0; z-index: 1; background: var(--card-bg, #fff);
+  padding: 4px 8px 6px; border-bottom: 1px solid var(--border);
+}
+.multi-select-search {
+  width: 100%; box-sizing: border-box; padding: 5px 8px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--input-bg); color: var(--text);
+  font-size: 13px;
+}
+.multi-select-search:focus { border-color: var(--accent); outline: none; }
 .multi-select-item {
   display: flex; align-items: center; gap: 6px; padding: 6px 12px;
   font-size: 13px; cursor: pointer; color: var(--text); white-space: nowrap;
@@ -4341,7 +4496,6 @@ button.region-pill-active:hover { opacity: 0.85; color: var(--text-on-accent); }
   .tab-btn,
   .filter-bar input,
   .filter-bar select,
-  .nav-btn,
   .region-pill,
   .region-dropdown-trigger,
   .multi-select-trigger,
@@ -4460,6 +4614,13 @@ th.sort-active { color: var(--accent, #60a5fa); }
 .map-side-pane .pane-toggle { cursor: pointer; padding: 8px; font-size: 14px; text-align: center; }
 .map-side-pane .pane-content { display: none; }
 .map-side-pane.expanded .pane-content { display: block; }
+/* #1998: controls belong to the Leaflet area, outside the inspector gutter. */
+@media (min-width: 641px) {
+  #mapSidePane ~ .map-controls { right: calc(32px + 12px); transition: right 0.2s; }
+  #mapSidePane ~ .map-controls-toggle { right: calc(32px + 10px); transition: right 0.2s; }
+  #mapSidePane.expanded ~ .map-controls { right: calc(320px + 12px); }
+  #mapSidePane.expanded ~ .map-controls-toggle { right: calc(320px + 10px); }
+}
 /* #1236: on mobile the path-inspector side pane was eating 32px of horizontal
    width (flex:0 0 32px) inside #map-wrap, leaving an unused gutter on the
    right of the leaflet canvas. Path Inspector is a desktop-only convenience;
@@ -4533,6 +4694,42 @@ th.sort-active { color: var(--accent, #60a5fa); }
   --mc-mb-confirmed:   #56F0A0; /* audit override of Tol vibrant for fill contrast */
   --mc-mb-suspected:   #FFD966;
   --mc-mb-unknown:     #FF8888;
+
+  /* #2001 — the scope-state colours are declared on `body`, not here: a custom
+   * property that references --mc-mb-* has to be declared on the same element
+   * the presets override those on, or it resolves against :root's value and the
+   * preset never reaches it. See the body rule below. */
+}
+
+/* #2001 — scope-state colours, declared on `body` rather than `:root`.
+ *
+ * Four of the six derive from the multi-byte accents rather than adding a
+ * sixth hand-tuned palette, so a colorblind preset retints them with the rest
+ * of the map. That only works from here: the presets override --mc-mb-* on
+ * `body[data-cb-preset="..."]`, and a custom property is substituted using the
+ * value computed on the element it is declared on. Declared on :root these
+ * resolved against :root's --mc-mb-*, so the CSS half of the preset system
+ * never reached them — measured with data-cb-preset="deut" set and no inline
+ * override: --mc-mb-confirmed became #648FFF at body level while
+ * --mc-scope-full stayed #56F0A0. Declared here, both preset paths work: the
+ * CSS blocks because they land on the same element, and cb-presets.js's inline
+ * write on documentElement because body inherits it.
+ *
+ * --mc-scope-observed means "carries scoped traffic, but never told us its
+ * config", a weaker claim than 'full', so it reads as a lighter version of the
+ * same colour rather than a different one. --mc-scope-no-flood does NOT derive:
+ * every role colour is operator-customisable and the default --mc-role-room is
+ * #009E73, a green, which put the rarest state in the same hue as 'full' on a
+ * live instance. --mc-scope-none is a fixed neutral: absence of information is
+ * not a state on the good/bad axis and must not compete for attention with the
+ * states that are. */
+body {
+  --mc-scope-full:        var(--mc-mb-confirmed);
+  --mc-scope-observed:    color-mix(in srgb, var(--mc-mb-confirmed) 55%, #ffffff);
+  --mc-scope-no-unscoped: var(--mc-mb-suspected);
+  --mc-scope-no-scopes:   var(--mc-mb-unknown);
+  --mc-scope-no-flood:    #B197FC;
+  --mc-scope-none:        #9aa3ad;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -4625,6 +4822,26 @@ body[data-cb-preset="achromat"] {
   --mc-mb-confirmed:   #b3b3b3;
   --mc-mb-suspected:   #808080;
   --mc-mb-unknown:     #595959;
+  /* #2001 — the six scope states, spread across this preset's own luminance
+     ramp. Four of them derive from the --mc-mb-* values above and would come
+     out at 70/50/35%, but the two literals (no-flood, none) do not derive and
+     landed at L 0.385 and L 0.361 next to full's 0.451: 1.15:1 and 1.06:1,
+     which on a monochrome preset is one colour. Ordered by how closed the
+     state is, so the ramp itself carries meaning: observed lightest, no-flood
+     darkest, no-data between observed and full.
+
+     This does not make the six distinguishable. Six levels cannot be spread
+     across a greyscale at 3:1 steps — the worst pair here is observed vs
+     no-data at 1.25:1, up from 1.06:1 before, and half the pairs sit under
+     1.8:1. The ramp is an aid, not the answer. What carries the state on this
+     preset is the marker title and the Scope row in the popup (map.js), which
+     is why those are not optional. */
+  --mc-scope-observed:    #e6e6e6;
+  --mc-scope-full:        #b3b3b3;
+  --mc-scope-no-unscoped: #808080;
+  --mc-scope-no-scopes:   #595959;
+  --mc-scope-no-flood:    #333333;
+  --mc-scope-none:        #cfcfcf;
 }
 
 .mc-cluster-wrap { background: transparent !important; border: 0 !important; }
@@ -4706,6 +4923,27 @@ body[data-cb-preset="achromat"] {
 .mc-mb-label.status-confirmed { border-left-color: var(--mc-mb-confirmed); }
 .mc-mb-label.status-suspected { border-left-color: var(--mc-mb-suspected); }
 .mc-mb-label.status-unknown   { border-left-color: var(--mc-mb-unknown);   }
+/* #2001 — scope-config overlay. Only ever set when the multi-byte overlay is
+ * off (map.js stands the scope tint down when both are on), so these can share
+ * the same stripe without a specificity fight. */
+.mc-mb-label.scope-full        { border-left-color: var(--mc-scope-full);        }
+.mc-mb-label.scope-observed    { border-left-color: var(--mc-scope-observed);    }
+.mc-mb-label.scope-no-unscoped { border-left-color: var(--mc-scope-no-unscoped); }
+.mc-mb-label.scope-no-scopes   { border-left-color: var(--mc-scope-no-scopes);   }
+.mc-mb-label.scope-no-flood    { border-left-color: var(--mc-scope-no-flood);    }
+.mc-mb-label.scope-none        { border-left-color: var(--mc-scope-none);        }
+/* #2001 — swatch inside a filter button: small enough to sit on the text
+ * baseline without stretching the button, round so it does not read as a
+ * second nested button. */
+.scope-swatch { width: 9px; height: 9px; border-radius: 50%; border: none; margin-right: 5px; flex: 0 0 auto; }
+/* Seven buttons do not fit the map-controls panel on one line (it is
+ * clamp(160px, 18vw, 240px) wide), and the flex default of nowrap pushed the
+ * last ones past the panel edge with "No unscoped" broken mid-label. Wrap the
+ * group into rows and keep each label whole. Scoped to this group so the
+ * three-button Status and five-button Byte Size groups keep the layout they
+ * already have. */
+#mcScopeFilter { flex-wrap: wrap; }
+#mcScopeFilter .btn { white-space: nowrap; }
 /* The width of the prefix itself is a guess when the node has no advert-derived
    hash_size. Dotted underline marks the digits as unverified — a shape cue, not
    a color one, so it survives forced-colors and color-vision differences. The
@@ -4759,6 +4997,10 @@ body[data-cb-preset="achromat"] {
   border-radius: 6px; cursor: pointer; font-size: 13px;
 }
 .ch-modal-btn-secondary[disabled] { opacity: .5; cursor: not-allowed; }
+.ch-modal-btn-secondary[hidden] { display: none; } /* the base rule's inline-flex would override [hidden] */
+.ch-propose-msg { font-size: 12px; margin-top: 4px; }
+.ch-propose-msg.ok { color: var(--status-green-tint-text); }
+.ch-propose-msg.err { color: var(--status-red-text); }
 .ch-hashtag-row .ch-hashtag-prefix {
   font-family: var(--mono, monospace); font-size: 14px; color: var(--text-muted); padding: 0 2px;
 }
@@ -4845,18 +5087,32 @@ body[data-cb-preset="achromat"] {
   border-radius: 8px;
   cursor: pointer;
   user-select: none;
+  /* The pill is the last flex item after the chips that overflow, so on its
+   * own it sits past the clipped edge and never shows. Stick it to the
+   * right edge of .path-hops (overflow: hidden), over the last chip. */
+  position: sticky; right: 0; z-index: 1;
 }
-.path-overflow-pill:hover { color: var(--text); background: var(--bg-hover, var(--surface)); }
+/* Opaque on hover: the pill sits over the last chip, and --bg-hover is a
+ * translucent tint that let the chip show through. */
+.path-overflow-pill:hover { color: var(--text); background: var(--row-hover); border-color: var(--accent); }
 .path-popover {
   position: absolute; z-index: var(--z-popover);
   background: var(--surface); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-  padding: 8px 10px; max-width: min(360px, calc(100vw - 32px)); max-height: 240px; overflow: auto;
+  padding: 8px 10px; max-width: min(480px, calc(100vw - 32px)); max-height: min(420px, 60vh); overflow: auto;
   font-family: var(--mono); font-size: 12px;
 }
 .path-popover .path-popover-title { font-family: var(--font); font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
 .path-popover .hop, .path-popover .hop-named { white-space: nowrap; }
+/* Full path, one hop per line (packets.js _buildPathPopover). Each hop sits
+ * in its own .path-hops so chips keep their table styling, minus the 120px
+ * cap: the popover exists to show the names the table had to cut. */
+.path-popover-list { list-style: none; margin: 0; padding: 0; }
+.path-popover-list li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.path-popover-idx { min-width: 2ch; text-align: right; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.path-popover .path-hops { max-width: none; }
+.path-popover .path-hops .hop-named { max-width: none; }
 .fux-popover-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
 .fux-popover-close { background: transparent; border: none; color: var(--text-muted); font-size: 16px; cursor: pointer; padding: 0 4px; }
 .fux-popover-close:hover { color: var(--text); }

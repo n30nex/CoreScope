@@ -36,6 +36,10 @@ func applyMemoryLimit(maxMemoryMB int, envSet bool) (int64, string) {
 	// 1.5x headroom over the steady-state packet store budget covers
 	// transient peaks (cold-load row-scan / decode pipeline, Go's NextGC
 	// trigger at ~2x live heap). See issue #836 heap profile.
+	//
+	// GOMEMLIMIT covers Go-managed memory, not an RSS ceiling. PostgreSQL
+	// runs in another process and needs its own memory budget; its buffers
+	// and work memory are not represented by this packet-store limit.
 	limit := int64(maxMemoryMB) * 1024 * 1024 * 3 / 2
 	debug.SetMemoryLimit(limit)
 	return limit, "derived"

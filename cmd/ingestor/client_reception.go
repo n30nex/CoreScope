@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log"
 	"regexp"
@@ -22,7 +23,7 @@ var clientPubkeyRe = regexp.MustCompile(`^[0-9a-f]{2,64}$`)
 // companion reports WHERE it directly heard a node, so we write a
 // client_receptions row and never touch the observers/observations tables.
 // rxPubkey is the companion pubkey from the topic (ACL-bound by the broker).
-func handleClientPacket(store *Store, cfg *Config, tag, rxPubkey string, msg map[string]interface{}, channelKeys map[string]string, regionKeys map[string][]byte) {
+func handleClientPacket(store *Store, cfg *Config, tag, rxPubkey string, msg map[string]interface{}, channelKeys map[string]string, regionSet *regionKeySet) {
 	// The companion identity IS the (ACL-bound) topic pubkey. Reject non-hex
 	// topic segments so a no-ACL broker can't pollute the coverage tables, and
 	// never fall back to a payload-supplied id (that would defeat the ACL trust
@@ -83,6 +84,7 @@ func handleClientPacket(store *Store, cfg *Config, tag, rxPubkey string, msg map
 	rxAt := rxTime.Format(time.RFC3339)
 	ingestedAt := time.Now().UTC().Format(time.RFC3339)
 	isAdvert := decoded.Header.PayloadTypeName == "ADVERT"
+	isDiscoverResp := decoded.Header.PayloadTypeName == "CONTROL" && decoded.Payload.CtrlSubtype == "DISCOVER_RESP"
 
 	if cfg.ClientRxObservationsEnabled() {
 		// rxAtMillis: UNIQUE(rx_pubkey, pkt_hash, rx_at) needs sub-second
@@ -91,7 +93,7 @@ func handleClientPacket(store *Store, cfg *Config, tag, rxPubkey string, msg map
 		// collapse them and ON CONFLICT DO NOTHING would silently drop all but
 		// the first.
 		rxAtMillis := rxTime.Format(rxTimeMillisLayout)
-		if obs := buildClientRxObservation(direction, rxPubkey, rawHex, rxAtMillis, ingestedAt, decoded, regionKeys, snrPtr, rssiPtr, lat, lon, accPtr); obs != nil {
+		if obs := buildClientRxObservation(direction, rxPubkey, rawHex, rxAtMillis, ingestedAt, decoded, regionSet, snrPtr, rssiPtr, lat, lon, accPtr); obs != nil {
 			if _, err := store.InsertClientRxObservation(obs); err != nil {
 				log.Printf("MQTT [%s] client observation insert: %v", tag, err)
 			}
@@ -101,6 +103,7 @@ func handleClientPacket(store *Store, cfg *Config, tag, rxPubkey string, msg map
 	rec, ok := buildClientReception(
 		rxPubkey,
 		direction, decoded.Header.RouteType, decoded.Header.PayloadType, decoded.Path.Hops, decoded.Payload.PubKey, isAdvert,
+		isDiscoverResp, decoded.Payload.CtrlPubKey,
 		snrPtr, rssiPtr, lat, lon, accPtr, rxAt, ingestedAt,
 	)
 	if !ok {
@@ -125,7 +128,7 @@ func (s *Store) UpsertClientObserver(pubkey, name, ts string) error {
 		return nil
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO client_observers (pubkey, name, last_seen) VALUES (?,?,?)
+		INSERT INTO client_observers (pubkey, name, last_seen) VALUES (`+s.parameter(1)+`,`+s.parameter(2)+`,`+s.parameter(3)+`)
 		ON CONFLICT(pubkey) DO UPDATE SET name = excluded.name, last_seen = excluded.last_seen`,
 		strings.ToLower(pubkey), name, ts)
 	return err
@@ -178,10 +181,16 @@ type ClientReception struct {
 //     consume the next hop from the FRONT (firmware Mesh.cpp removeSelfFromPath),
 //     so path[len-1] is the route's destination-side end, not who was heard.
 //   - hops empty + isAdvert → the 0-hop advertiser, by its full pubkey.
+//   - hops empty + isDiscoverResp → the 0-hop responder, by its pubkey (8 or
+//     32 bytes — CTL_TYPE_NODE_DISCOVER_RESP always carries an 8-byte prefix
+//     or the full 32-byte key; anything else is rejected outright, not
+//     truncated). A node-discover reply is always a direct, zero-hop RX —
+//     stronger identification than a path hash, since it carries the
+//     responder's own identity rather than an inferred forwarder.
 //   - otherwise → not attributable (ok=false).
 //
 // Returns (heardKey lowercased, keylenBytes, src, ok).
-func deriveHeardKey(direction string, routeType, payloadType int, hops []string, advertPubkey string, isAdvert bool) (string, int, string, bool) {
+func deriveHeardKey(direction string, routeType, payloadType int, hops []string, advertPubkey string, isAdvert bool, isDiscoverResp bool, discoverPubkey string) (string, int, string, bool) {
 	if !strings.EqualFold(direction, "rx") {
 		return "", 0, "", false
 	}
@@ -207,6 +216,14 @@ func deriveHeardKey(direction string, routeType, payloadType int, hops []string,
 		pk := strings.ToLower(strings.TrimSpace(advertPubkey))
 		return pk, len(pk) / 2, "advert", true
 	}
+	if isDiscoverResp && discoverPubkey != "" {
+		pk := strings.ToLower(strings.TrimSpace(discoverPubkey))
+		keylen := len(pk) / 2
+		if keylen != 8 && keylen != 32 { // discover pubkeys are always 8B (prefix) or 32B (full) — no floor, an exact set
+			return "", 0, "", false
+		}
+		return pk, keylen, "discover", true
+	}
 	return "", 0, "", false
 }
 
@@ -214,6 +231,7 @@ func deriveHeardKey(direction string, routeType, payloadType int, hops []string,
 // returns ok=false when the packet is not attributable / out of range.
 func buildClientReception(
 	rxPubkey, direction string, routeType, payloadType int, hops []string, advertPubkey string, isAdvert bool,
+	isDiscoverResp bool, discoverPubkey string,
 	snr *float64, rssi *int, lat, lon float64, posAccM *float64, rxAt, ingestedAt string,
 ) (*ClientReception, bool) {
 	if rxPubkey == "" || rxAt == "" {
@@ -222,7 +240,7 @@ func buildClientReception(
 	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
 		return nil, false
 	}
-	heardKey, keylen, src, ok := deriveHeardKey(direction, routeType, payloadType, hops, advertPubkey, isAdvert)
+	heardKey, keylen, src, ok := deriveHeardKey(direction, routeType, payloadType, hops, advertPubkey, isAdvert, isDiscoverResp, discoverPubkey)
 	if !ok {
 		return nil, false
 	}
@@ -240,7 +258,7 @@ func (s *Store) InsertClientReception(r *ClientReception) (bool, error) {
 	res, err := s.db.Exec(`
 		INSERT INTO client_receptions
 			(rx_pubkey, heard_key, heard_keylen, rssi, snr, lat, lon, pos_acc_m, rx_at, ingested_at, src)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (`+s.parameter(1)+`,`+s.parameter(2)+`,`+s.parameter(3)+`,`+s.parameter(4)+`,`+s.parameter(5)+`,`+s.parameter(6)+`,`+s.parameter(7)+`,`+s.parameter(8)+`,`+s.parameter(9)+`,`+s.parameter(10)+`,`+s.parameter(11)+`)
 		ON CONFLICT(rx_pubkey, heard_key, rx_at) DO NOTHING`,
 		r.RxPubkey, r.HeardKey, r.HeardKeyLen, r.RSSI, r.SNR, r.Lat, r.Lon, r.PosAccM, r.RxAt, r.IngestedAt, r.Src)
 	if err != nil {
@@ -281,7 +299,7 @@ func (s *Store) InsertClientRfSample(o *ClientRfSample) (bool, error) {
 			 uptime_secs, battery_mv, queue_len, errors, noise_floor, last_rssi,
 			 last_snr, tx_air_secs, rx_air_secs, recv, sent, flood_rx, direct_rx,
 			 flood_tx, direct_tx, recv_errors)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (`+s.parameter(1)+`,`+s.parameter(2)+`,`+s.parameter(3)+`,`+s.parameter(4)+`,`+s.parameter(5)+`,`+s.parameter(6)+`,`+s.parameter(7)+`,`+s.parameter(8)+`,`+s.parameter(9)+`,`+s.parameter(10)+`,`+s.parameter(11)+`,`+s.parameter(12)+`,`+s.parameter(13)+`,`+s.parameter(14)+`,`+s.parameter(15)+`,`+s.parameter(16)+`,`+s.parameter(17)+`,`+s.parameter(18)+`,`+s.parameter(19)+`,`+s.parameter(20)+`,`+s.parameter(21)+`,`+s.parameter(22)+`,`+s.parameter(23)+`)
 		ON CONFLICT(rx_pubkey, sampled_at) DO NOTHING`,
 		o.RxPubkey, o.SampledAt, o.IngestedAt, o.Lat, o.Lon, o.PosAccM, boolToInt(o.Stationary),
 		o.UptimeSecs, o.BatteryMV, o.QueueLen, o.Errors, o.NoiseFloor, o.LastRSSI,
@@ -328,7 +346,7 @@ type ClientRxObservation struct {
 // signal — per-flood row multiplicity meant to measure forwarder
 // amplification of traffic actually heard over the air.
 func buildClientRxObservation(
-	direction, rxPubkey, rawHex, rxAt, ingestedAt string, decoded *DecodedPacket, regionKeys map[string][]byte,
+	direction, rxPubkey, rawHex, rxAt, ingestedAt string, decoded *DecodedPacket, regionSet *regionKeySet,
 	snr *float64, rssi *int, lat, lon float64, posAccM *float64,
 ) *ClientRxObservation {
 	if !strings.EqualFold(direction, "rx") {
@@ -353,7 +371,7 @@ func buildClientRxObservation(
 		obs.Code1 = &decoded.TransportCodes.Code1
 		obs.Code2 = &decoded.TransportCodes.Code2
 		if decoded.TransportCodes.Code1 != "0000" {
-			sn := matchScope(regionKeys, byte(decoded.Header.PayloadType), decoded.payloadRaw, decoded.TransportCodes.Code1)
+			sn := regionSet.matchScopeName(byte(decoded.Header.PayloadType), decoded.payloadRaw, decoded.TransportCodes.Code1)
 			obs.ScopeName = &sn
 		}
 	}
@@ -400,7 +418,7 @@ func (s *Store) InsertClientRxObservation(o *ClientRxObservation) (bool, error) 
 			(rx_pubkey, rx_at, ingested_at, pkt_hash, route_type, payload_type,
 			 code1, code2, scope_name, hash_size, hop_count, path_json, forwarder,
 			 snr, rssi, lat, lon, pos_acc_m)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (`+s.parameter(1)+`,`+s.parameter(2)+`,`+s.parameter(3)+`,`+s.parameter(4)+`,`+s.parameter(5)+`,`+s.parameter(6)+`,`+s.parameter(7)+`,`+s.parameter(8)+`,`+s.parameter(9)+`,`+s.parameter(10)+`,`+s.parameter(11)+`,`+s.parameter(12)+`,`+s.parameter(13)+`,`+s.parameter(14)+`,`+s.parameter(15)+`,`+s.parameter(16)+`,`+s.parameter(17)+`,`+s.parameter(18)+`)
 		ON CONFLICT(rx_pubkey, pkt_hash, rx_at) DO NOTHING`,
 		o.RxPubkey, o.RxAt, o.IngestedAt, o.PktHash, o.RouteType, o.PayloadType,
 		o.Code1, o.Code2, o.ScopeName, o.HashSize, o.HopCount, o.PathJSON, o.Forwarder,
@@ -410,4 +428,66 @@ func (s *Store) InsertClientRxObservation(o *ClientRxObservation) (bool, error) 
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+// ClientDeclaredRegions is one repeater's answer to a flood-allowed region
+// list request (ANON_REQ_TYPE_REGIONS), relayed by a mobile companion. Every
+// answer is a row — this table stores observations, never state. An empty
+// RegionsCSV is a valid, deliberate answer ("nothing flood-allowed"); a
+// repeater that did not answer produces no row at all, never a row with an
+// empty list standing in for silence. Truncated is a hint, not a detection:
+// the firmware's exportNamesTo skips names that do not fit and continues, so
+// an overflowing reply has holes rather than a truncated prefix, with no
+// marker distinguishing the two.
+type ClientDeclaredRegions struct {
+	Target        string
+	RxPubkey      string
+	ObservedAt    string
+	IngestedAt    string
+	RegionsCSV    string
+	Truncated     bool
+	Lat, Lon      *float64
+	PosAccM       *float64
+	RepeaterClock *int64
+}
+
+// InsertClientDeclaredRegions writes one declared-region observation.
+// Idempotent via UNIQUE(target, rx_pubkey, observed_at); returns ins=false
+// when the row already existed.
+func (s *Store) InsertClientDeclaredRegions(o *ClientDeclaredRegions) (bool, error) {
+	res, err := s.db.Exec(`
+		INSERT INTO node_declared_regions
+			(target, rx_pubkey, observed_at, ingested_at, regions_csv, truncated, lat, lon, pos_acc_m, repeater_clock)
+		VALUES (`+s.parameter(1)+`,`+s.parameter(2)+`,`+s.parameter(3)+`,`+s.parameter(4)+`,`+s.parameter(5)+`,`+s.parameter(6)+`,`+s.parameter(7)+`,`+s.parameter(8)+`,`+s.parameter(9)+`,`+s.parameter(10)+`)
+		ON CONFLICT(target, rx_pubkey, observed_at) DO NOTHING`,
+		o.Target, o.RxPubkey, o.ObservedAt, o.IngestedAt, o.RegionsCSV, boolToInt(o.Truncated), o.Lat, o.Lon, o.PosAccM, o.RepeaterClock)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// CurrentDeclaredRegions returns the most recent declared-region observation
+// for a target, or nil if none exist. "Most recent" is the greatest
+// observed_at, NOT the greatest ingested_at: a drive buffered offline can
+// arrive days late, and ordering by arrival would let that stale reading
+// overwrite a fresher one.
+func (s *Store) CurrentDeclaredRegions(target string) (*ClientDeclaredRegions, error) {
+	target = strings.ToLower(strings.TrimSpace(target))
+	row := s.db.QueryRow(`
+		SELECT target, rx_pubkey, observed_at, ingested_at, regions_csv, truncated, lat, lon, pos_acc_m, repeater_clock
+		FROM node_declared_regions
+		WHERE target = `+s.parameter(1)+`
+		ORDER BY observed_at DESC LIMIT 1`, target)
+	var o ClientDeclaredRegions
+	var truncated int
+	if err := row.Scan(&o.Target, &o.RxPubkey, &o.ObservedAt, &o.IngestedAt, &o.RegionsCSV, &truncated, &o.Lat, &o.Lon, &o.PosAccM, &o.RepeaterClock); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	o.Truncated = truncated == 1
+	return &o, nil
 }

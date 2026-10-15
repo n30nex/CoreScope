@@ -40,8 +40,8 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("missing config should not error (zero-config mode), got: %v", err)
 	}
-	if cfg.DBPath != "data/meshcore.db" {
-		t.Errorf("dbPath=%s, want data/meshcore.db", cfg.DBPath)
+	if cfg.DBPath != "" || cfg.DatabaseURL != "" || cfg.StateDir != "" {
+		t.Errorf("unexpected database/state defaults")
 	}
 	// Should default to localhost MQTT
 	if len(cfg.MQTTSources) != 1 {
@@ -193,8 +193,8 @@ func TestLoadConfigDefaultDBPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DBPath != "data/meshcore.db" {
-		t.Errorf("dbPath=%s, want data/meshcore.db", cfg.DBPath)
+	if cfg.DBPath != "" || cfg.DatabaseURL != "" || cfg.StateDir != "" {
+		t.Errorf("unexpected database/state defaults")
 	}
 }
 
@@ -547,5 +547,20 @@ func TestGetPathTrustNilConfig(t *testing.T) {
 	pt := cfg.GetPathTrust()
 	if pt.MinHashBytesForMapping != packetpath.DefaultMinHashBytesForMapping {
 		t.Errorf("expected default %d for nil *Config, got %d", packetpath.DefaultMinHashBytesForMapping, pt.MinHashBytesForMapping)
+	}
+}
+
+func TestClientRegionsDaysOrZero(t *testing.T) {
+	var c Config
+	if got := c.ClientRegionsDaysOrZero(); got != 0 {
+		t.Errorf("unset retention = %d, want 0", got)
+	}
+	c.Retention = &RetentionConfig{ClientRegionsDays: 21}
+	if got := c.ClientRegionsDaysOrZero(); got != 21 {
+		t.Errorf("retention = %d, want 21", got)
+	}
+	c.Retention = &RetentionConfig{ClientRegionsDays: 0}
+	if got := c.ClientRegionsDaysOrZero(); got != 0 {
+		t.Errorf("retention=0 = %d, want 0", got)
 	}
 }

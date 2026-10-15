@@ -285,7 +285,7 @@ func TestPollerBroadcastsMultipleObservations(t *testing.T) {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := db.conn.Exec(`INSERT INTO transmissions (raw_hex, hash, first_seen, route_type, payload_type, decoded_json)
-		VALUES ('FACE', 'starbursthash237a', ?, 1, 4, '{"pubKey":"aabbccdd11223344","type":"ADVERT"}')`, now); err != nil {
+		VALUES ('FACE', 'starbursthash237a', $1, 1, 4, '{"pubKey":"aabbccdd11223344","type":"ADVERT"}')`, now); err != nil {
 		t.Fatalf("insert tx failed: %v", err)
 	}
 	var txID int
@@ -294,9 +294,9 @@ func TestPollerBroadcastsMultipleObservations(t *testing.T) {
 	}
 	ts := time.Now().Unix()
 	if _, err := db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
-		VALUES (?, 1, 14.0, -82, '["aa"]', ?),
-		       (?, 2, 10.5, -90, '["aa","bb"]', ?),
-		       (?, 1, 7.0, -96, '["aa","bb","cc"]', ?)`,
+		VALUES ($1, 1, 14.0, -82, '["aa"]', $2),
+		       ($3, 2, 10.5, -90, '["aa","bb"]', $4),
+		       ($5, 1, 7.0, -96, '["aa","bb","cc"]', $6)`,
 		txID, ts, txID, ts+1, txID, ts+2); err != nil {
 		t.Fatalf("insert observations failed: %v", err)
 	}
@@ -367,8 +367,8 @@ func TestIngestNewObservationsBroadcast(t *testing.T) {
 	maxObs := db.GetMaxObservationID()
 	now := time.Now().Unix()
 	if _, err := db.conn.Exec(`INSERT INTO observations (transmission_id, observer_idx, snr, rssi, path_json, timestamp)
-		VALUES (1, 2, 6.0, -100, '["aa","zz"]', ?),
-		       (1, 1, 5.0, -101, '["aa","yy"]', ?)`, now, now+1); err != nil {
+		VALUES (1, 2, 6.0, -100, '["aa","zz"]', $1),
+		       (1, 1, 5.0, -101, '["aa","yy"]', $2)`, now, now+1); err != nil {
 		t.Fatalf("insert new observations failed: %v", err)
 	}
 
@@ -411,5 +411,46 @@ func TestHubRegisterUnregister(t *testing.T) {
 	hub.Unregister(client)
 	if hub.ClientCount() != 0 {
 		t.Errorf("expected 0 clients, got %d", hub.ClientCount())
+	}
+}
+
+// #1074: browsers cannot see protocol-level pings, so a page cannot tell a
+// quiet mesh from a dead socket unless the server also sends something the
+// page receives. The heartbeat rides the same ticker as the ping.
+func TestWritePumpSendsAppHeartbeat(t *testing.T) {
+	hub := NewHub()
+	hub.pingInterval = 20 * time.Millisecond
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hub.ServeWS(w, r)
+	}))
+	defer srv.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+srv.URL[4:], nil)
+	if err != nil {
+		t.Fatalf("dial error: %v", err)
+	}
+	defer conn.Close()
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	kind, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("expected a heartbeat with no broadcast traffic, got read error: %v", err)
+	}
+	if kind != websocket.TextMessage {
+		t.Fatalf("heartbeat must be a text frame so page JS receives it, got frame type %d", kind)
+	}
+	// public/app.js matches these exact bytes to keep heartbeats away from
+	// page listeners; changing them breaks that match.
+	if string(msg) != `{"type":"heartbeat"}` {
+		t.Fatalf("heartbeat bytes changed: %s", msg)
+	}
+}
+
+// The client's stale threshold (WS_STALE_MS in public/app.js, 75s) assumes
+// a heartbeat at least every 30s.
+func TestHubDefaultPingInterval(t *testing.T) {
+	if got := NewHub().pingInterval; got != 30*time.Second {
+		t.Fatalf("pingInterval = %v, want 30s (public/app.js WS_STALE_MS depends on it)", got)
 	}
 }

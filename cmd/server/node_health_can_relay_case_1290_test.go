@@ -36,27 +36,44 @@ func TestNodeHealth_CanRelayCaseInsensitive_Issue1290(t *testing.T) {
 	}
 	if _, err := srv.store.db.conn.Exec(
 		`INSERT INTO observers (id, name, iata, last_seen, first_seen, packet_count, can_relay, can_relay_seen)
-		 VALUES (?, 'ListenerOnly', 'SJC', ?, '2026-01-01T00:00:00Z', 1, 0, 1)`,
+		 VALUES ($1, 'ListenerOnly', 'SJC', $2, '2026-01-01T00:00:00Z', 1, 0, 1)`,
 		obsIDLower, now); err != nil {
 		t.Fatalf("seed observer: %v", err)
 	}
 
 	// In-memory packet with the MIXED-case observer id so the badge resolver
 	// must lower-case both sides to match against the lower-cased pubkey set.
+	// The packet is a flood ADVERT heard with an empty path, which is what
+	// makes the observer a DIRECT receiver of nodePubkey — only direct rows
+	// carry the badge (see direct_heard.go).
 	snr := 7.0
-	srv.store.mu.Lock()
-	if srv.store.byNode == nil {
-		srv.store.byNode = make(map[string][]*StoreTx)
-	}
-	srv.store.byNode[nodePubkey] = append(srv.store.byNode[nodePubkey], &StoreTx{
+	routeFlood := RouteFlood
+	payloadAdvert := PayloadADVERT
+	tx := &StoreTx{
 		Hash:             "1290casebadge00",
 		FirstSeen:        now,
+		RouteType:        &routeFlood,
+		PayloadType:      &payloadAdvert,
+		DecodedJSON:      `{"type":"ADVERT","pubKey":"` + nodePubkey + `"}`,
 		SNR:              &snr,
 		ObservationCount: 1,
 		ObserverID:       obsIDMixed,
 		ObserverName:     "ListenerOnly",
-	})
+		Observations: []*StoreObs{{
+			ObserverID:   obsIDMixed,
+			ObserverName: "ListenerOnly",
+			PathJSON:     "[]",
+			SNR:          &snr,
+		}},
+	}
+	srv.store.mu.Lock()
+	if srv.store.byNode == nil {
+		srv.store.byNode = make(map[string][]*StoreTx)
+	}
+	srv.store.byNode[nodePubkey] = append(srv.store.byNode[nodePubkey], tx)
+	srv.store.packets = append(srv.store.packets, tx)
 	srv.store.mu.Unlock()
+	srv.store.publishDirectHeard(srv.store.computeDirectHeard())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/nodes/"+nodePubkey+"/health", nil)
 	w := httptest.NewRecorder()

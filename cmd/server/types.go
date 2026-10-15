@@ -113,11 +113,26 @@ type ScopeTimePoint struct {
 	Unscoped int    `json:"unscoped"`
 }
 
+// ScopeAdvertRoleCount is one row of the adverts-by-role breakdown (#1979):
+// flood adverts sent by nodes of one role, split by the three scope_name
+// states. Role is the sender's nodes.role, or "unknown" when the advert has
+// no from_pubkey (legacy row not yet reached by the #1143 backfill), when the
+// sender has no nodes row (also after MoveStaleNodes moved it to
+// inactive_nodes, possible inside the 7d window only with
+// retention.nodeDays < 7), or when its role is empty.
+type ScopeAdvertRoleCount struct {
+	Role         string `json:"role"`
+	Unscoped     int    `json:"unscoped"`
+	UnknownScope int    `json:"unknownScope"`
+	Named        int    `json:"named"`
+}
+
 type ScopeStatsResponse struct {
-	Window     string             `json:"window"`
-	Summary    ScopeStatsSummary  `json:"summary"`
-	ByRegion   []ScopeRegionCount `json:"byRegion"`
-	TimeSeries []ScopeTimePoint   `json:"timeSeries"`
+	Window        string                 `json:"window"`
+	Summary       ScopeStatsSummary      `json:"summary"`
+	ByRegion      []ScopeRegionCount     `json:"byRegion"`
+	TimeSeries    []ScopeTimePoint       `json:"timeSeries"`
+	AdvertsByRole []ScopeAdvertRoleCount `json:"advertsByRole"`
 }
 
 // ─── Health ────────────────────────────────────────────────────────────────────
@@ -158,6 +173,13 @@ type PerfCacheStats struct {
 
 type WebSocketStatsResp struct {
 	Clients int `json:"clients"`
+	// #1794: upgrade rejections since boot, split by cause so an operator can
+	// tell a deny-list hit from a client that is merely reconnecting too fast.
+	// omitempty: an install with no limits configured sends none of these
+	// rather than three permanent zeroes.
+	RejectedDeny    int64 `json:"rejectedDeny,omitempty"`
+	RejectedRate    int64 `json:"rejectedRate,omitempty"`
+	RejectedConnCap int64 `json:"rejectedConnCap,omitempty"`
 }
 
 type HealthPacketStoreStats struct {
@@ -239,25 +261,23 @@ type PerfPacketStoreStats struct {
 	LoadCoverageRatio float64 `json:"loadCoverageRatio"`
 }
 
-type WalPages struct {
-	Total        int `json:"total"`
-	Checkpointed int `json:"checkpointed"`
-	Busy         int `json:"busy"`
-}
-
-type SqliteRowCounts struct {
+type DatabaseRowCounts struct {
 	Transmissions int `json:"transmissions"`
 	Observations  int `json:"observations"`
 	Nodes         int `json:"nodes"`
 	Observers     int `json:"observers"`
 }
 
-type SqliteStats struct {
-	DbSizeMB   float64          `json:"dbSizeMB"`
-	WalSizeMB  float64          `json:"walSizeMB"`
-	FreelistMB float64          `json:"freelistMB"`
-	WalPages   *WalPages        `json:"walPages"`
-	Rows       *SqliteRowCounts `json:"rows"`
+type PostgresStats struct {
+	WalSizeMB             *float64           `json:"walSizeMB,omitempty"`
+	FreelistMB            *float64           `json:"freelistMB,omitempty"`
+	Engine                string             `json:"engine"`
+	DbSizeMB              *float64           `json:"dbSizeMB"`
+	Rows                  *DatabaseRowCounts `json:"rows"`
+	SampledAt             string             `json:"sampledAt,omitempty"`
+	SampleIntervalSeconds int                `json:"sampleIntervalSeconds"`
+	Stale                 bool               `json:"stale"`
+	Error                 string             `json:"error,omitempty"`
 }
 
 type PerfResponse struct {
@@ -268,7 +288,9 @@ type PerfResponse struct {
 	SlowQueries   []SlowQuery                   `json:"slowQueries"`
 	Cache         PerfCacheStats                `json:"cache"`
 	PacketStore   *PerfPacketStoreStats         `json:"packetStore"`
-	Sqlite        *SqliteStats                  `json:"sqlite"`
+	Postgres      *PostgresStats                `json:"postgres"`
+	Sqlite        *PostgresStats                `json:"sqlite,omitempty"`
+	Database      *PostgresStats                `json:"database,omitempty"`
 	GoRuntime     *GoRuntimeStats               `json:"goRuntime,omitempty"`
 	// MemoryBreakdown is populated only for /api/perf?mem=1 (an O(tx+obs)
 	// walk, opt-in so the normal hot endpoint stays cheap). It sizes the
@@ -413,6 +435,12 @@ type NodeListResponse struct {
 	Nodes  []map[string]interface{} `json:"nodes"`
 	Total  int                      `json:"total"`
 	Counts map[string]int           `json:"counts"`
+	// HasMore reports whether rows exist past this page. Computed from the raw
+	// SQL page before the post-LIMIT filters in handleNodes, which shorten the
+	// page and rewrite Total — so it is the only field a paginating client can
+	// trust to decide whether to ask for another page. Always emitted (no
+	// omitempty): a client must be able to tell "false" from "old server".
+	HasMore bool `json:"has_more"`
 }
 
 type NodeSearchResponse struct {
@@ -552,6 +580,21 @@ type NodeAnalyticsResponse struct {
 	UptimeHeatmap       []HeatmapCell           `json:"uptimeHeatmap"`
 	ComputedStats       ComputedNodeStats       `json:"computedStats"`
 	ClockSkew           *NodeClockSkew          `json:"clockSkew,omitempty"`
+}
+
+// NodeHopPacket is one flood packet this node forwarded, with the hop count
+// the node's flood.max check saw for it (issue #1812).
+type NodeHopPacket struct {
+	Hash      string   `json:"hash"`
+	Timestamp string   `json:"timestamp"`
+	Hops      int      `json:"hops"`
+	Tags      []string `json:"tags"`
+}
+
+type NodeHopAnalyticsResponse struct {
+	TimeRange TimeRangeResp   `json:"timeRange"`
+	Packets   []NodeHopPacket `json:"packets"`
+	Ambiguous int             `json:"ambiguous"`
 }
 
 // ─── Analytics — RF ────────────────────────────────────────────────────────────
@@ -887,6 +930,9 @@ type ChannelResp struct {
 
 type ChannelListResponse struct {
 	Channels []map[string]interface{} `json:"channels"`
+	// ApprovedChannels is set only when channel proposals are on (then
+	// always, [] included); nil keeps the response unchanged when off.
+	ApprovedChannels *[]string `json:"approvedChannels,omitempty"`
 }
 
 type ChannelMessageResp struct {
@@ -1039,7 +1085,19 @@ type ClientConfigResponse struct {
 	MapDarkTileProvider string                 `json:"mapDarkTileProvider,omitempty"` // deprecated. TODO: remove after v3.5.0
 	Customizer          CustomizerClientConfig `json:"customizer"`
 	ClientRxCoverage    bool                   `json:"clientRxCoverage"`
+	ClientRfSamples     bool                   `json:"clientRfSamples"`
 	PathTrust           *PathTrustConfig       `json:"pathTrust,omitempty"`
+	// Present only when user management is on, so the payload is unchanged
+	// for every instance that leaves it off.
+	UserManagement *ClientUserManagement `json:"userManagement,omitempty"`
+}
+
+// ClientUserManagement tells the frontend that accounts exist, and whether
+// channel proposals and node notifications are on.
+type ClientUserManagement struct {
+	Enabled          bool `json:"enabled"`
+	ChannelProposals bool `json:"channelProposals,omitempty"`
+	Notifications    bool `json:"notifications,omitempty"`
 }
 
 // CustomizerClientConfig is the operator-side customizer-modal knobs that
