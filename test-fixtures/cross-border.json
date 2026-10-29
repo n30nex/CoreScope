@@ -1,0 +1,1204 @@
+{
+  "enabled": true,
+  "status": "ready",
+  "generatedAt": "2026-10-28T20:00:00Z",
+  "filters": {
+    "localIata": [
+      "AAA"
+    ],
+    "peerIata": [
+      "BBB"
+    ],
+    "scope": "all",
+    "windowMinutes": 60
+  },
+  "sources": {
+    "local": {
+      "label": "Local reference",
+      "status": "available",
+      "selectionIata": [
+        "AAA"
+      ],
+      "oldestStoredObservationAt": "2026-10-27T12:00:00Z",
+      "latestObservationAt": "2026-10-28T19:59:10Z",
+      "latestAfterSnapshotAt": null,
+      "ageSeconds": 50,
+      "rowsRead": 2,
+      "excludedTxObservations": 0,
+      "unknownDirectionObservations": 0,
+      "observationsTruncated": false,
+      "observersTruncated": false,
+      "nodesTruncated": false,
+      "referenceProfile": null,
+      "excludedInvalidObservations": 0
+    },
+    "peer": {
+      "label": "Peer telemetry",
+      "status": "available",
+      "selectionIata": [
+        "BBB"
+      ],
+      "oldestStoredObservationAt": "2026-10-28T18:00:00Z",
+      "latestObservationAt": "2026-10-28T19:59:00Z",
+      "latestAfterSnapshotAt": null,
+      "ageSeconds": 60,
+      "rowsRead": 3,
+      "excludedTxObservations": 0,
+      "unknownDirectionObservations": 1,
+      "observationsTruncated": false,
+      "observersTruncated": false,
+      "nodesTruncated": false,
+      "referenceProfile": {
+        "label": "Example community recommendation",
+        "url": "https://example.org/radio-profile",
+        "frequencyMHz": 910.525,
+        "bandwidthKHz": 62.5,
+        "spreadingFactor": 7,
+        "codingRate": 8,
+        "hopWidthBytes": 2
+      },
+      "excludedInvalidObservations": 0
+    }
+  },
+  "options": {
+    "localRegions": [
+      {
+        "iata": "AAA",
+        "label": "AAA",
+        "observers": 2
+      }
+    ],
+    "peerRegions": [
+      {
+        "iata": "BBB",
+        "label": "BBB",
+        "observers": 2
+      }
+    ],
+    "scopes": [
+      {
+        "value": "all",
+        "label": "All scopes"
+      },
+      {
+        "value": "unscoped",
+        "label": "Unscoped"
+      },
+      {
+        "value": "unknown",
+        "label": "Unknown scope"
+      },
+      {
+        "value": "example",
+        "label": "example"
+      }
+    ],
+    "windowMinutes": [
+      15,
+      60,
+      180,
+      360
+    ]
+  },
+  "limits": {
+    "observationRows": 5000,
+    "metadataRows": 500,
+    "packetRows": 100,
+    "observationsPerPacket": 8,
+    "cacheSeconds": 30
+  },
+  "completeness": {
+    "complete": true,
+    "packetsTruncated": false,
+    "peerRepeatersTruncated": false
+  },
+  "summary": {
+    "peerPackets": 3,
+    "localReferencePackets": 2,
+    "independentSharedPackets": 1,
+    "sharedObserverOnlyPackets": 1,
+    "sharedFeedIdentityPackets": 0,
+    "notSeenLocallyPackets": 1,
+    "duplicateObserverIds": 1,
+    "identityUnverifiedPackets": 0
+  },
+  "peerObservers": [
+    {
+      "id": "peer-observer",
+      "name": "Peer observer",
+      "iata": "BBB",
+      "sharedIdentity": false,
+      "lastSeenAt": "2026-10-28T19:59:00Z",
+      "reportedCanRelay": true,
+      "canRelayReportedAt": null,
+      "location": {
+        "lat": 44,
+        "lon": -74,
+        "reportedAt": null
+      },
+      "sampleObservations": 2,
+      "unknownDirectionObservations": 1,
+      "hopWidths": [
+        1,
+        2
+      ],
+      "observedScopes": [
+        {
+          "kind": "named",
+          "name": "example"
+        },
+        {
+          "kind": "unscoped",
+          "name": null
+        }
+      ],
+      "latestReportedRadioHardware": "910.525,62.5,7,8",
+      "radioHardwareReportedAt": null
+    },
+    {
+      "id": "shared-observer",
+      "name": "Shared observer",
+      "iata": "BBB",
+      "sharedIdentity": true,
+      "lastSeenAt": "2026-10-28T19:58:00Z",
+      "reportedCanRelay": null,
+      "canRelayReportedAt": null,
+      "location": null,
+      "sampleObservations": 1,
+      "unknownDirectionObservations": 0,
+      "hopWidths": [
+        1
+      ],
+      "observedScopes": [
+        {
+          "kind": "unknown",
+          "name": null
+        }
+      ],
+      "latestReportedRadioHardware": "910.525024,62.5,7,5",
+      "radioHardwareReportedAt": null
+    }
+  ],
+  "peerRepeaters": [
+    {
+      "publicKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "name": "Example repeater",
+      "role": "repeater",
+      "lastSeenAt": "2026-10-28T19:50:00Z",
+      "location": {
+        "lat": 44,
+        "lon": -74,
+        "reportedAt": null
+      },
+      "declaredScopes": {
+        "names": [
+          "example"
+        ],
+        "allowsUnscoped": true,
+        "reportedAt": "2026-10-28T19:45:00Z",
+        "truncated": null
+      },
+      "observedScopes": [
+        {
+          "kind": "named",
+          "name": "example"
+        }
+      ],
+      "observedUnscoped": false,
+      "observedUnknownScope": false,
+      "hopWidths": [
+        2
+      ],
+      "sampleForwardedPackets": 1,
+      "lastForwardedAt": "2026-10-28T19:59:00Z"
+    }
+  ],
+  "packets": [
+    {
+      "hash": "1111111111111111",
+      "payloadType": 4,
+      "routeType": 0,
+      "scope": {
+        "kind": "named",
+        "name": "example"
+      },
+      "lastSeenAt": "2026-10-28T19:59:00Z",
+      "overlap": "independent",
+      "peerObservationCount": 1,
+      "localObservationCount": 1,
+      "observationsTruncated": false,
+      "peerObservations": [
+        {
+          "observerId": "peer-observer",
+          "observedAt": "2026-10-28T19:59:00Z",
+          "direction": "rx",
+          "snr": 4.5,
+          "rssi": -94,
+          "hopWidth": 2,
+          "hopCount": 1,
+          "sharedObserver": false,
+          "routeType": 0,
+          "scope": {
+            "kind": "named",
+            "name": "example"
+          }
+        }
+      ],
+      "localObservations": [
+        {
+          "observerId": "local-observer",
+          "observedAt": "2026-10-28T19:59:10Z",
+          "direction": "rx",
+          "snr": 2,
+          "rssi": -99,
+          "hopWidth": 2,
+          "hopCount": 2,
+          "sharedObserver": false,
+          "routeType": 0,
+          "scope": {
+            "kind": "named",
+            "name": "example"
+          }
+        }
+      ]
+    },
+    {
+      "hash": "2222222222222222",
+      "payloadType": 5,
+      "routeType": 1,
+      "scope": {
+        "kind": "unscoped",
+        "name": null
+      },
+      "lastSeenAt": "2026-10-28T19:58:30Z",
+      "overlap": "not_seen_locally",
+      "peerObservationCount": 1,
+      "localObservationCount": 0,
+      "observationsTruncated": false,
+      "peerObservations": [
+        {
+          "observerId": "peer-observer",
+          "observedAt": "2026-10-28T19:58:30Z",
+          "direction": "unknown",
+          "snr": null,
+          "rssi": null,
+          "hopWidth": 1,
+          "hopCount": 0,
+          "sharedObserver": false,
+          "routeType": 1,
+          "scope": {
+            "kind": "unscoped",
+            "name": null
+          }
+        }
+      ],
+      "localObservations": []
+    },
+    {
+      "hash": "3333333333333333",
+      "payloadType": 4,
+      "routeType": 0,
+      "scope": {
+        "kind": "unknown",
+        "name": null
+      },
+      "lastSeenAt": "2026-10-28T19:58:00Z",
+      "overlap": "shared_observer_only",
+      "peerObservationCount": 1,
+      "localObservationCount": 1,
+      "observationsTruncated": false,
+      "peerObservations": [
+        {
+          "observerId": "shared-observer",
+          "observedAt": "2026-10-28T19:58:00Z",
+          "direction": "rx",
+          "snr": 3,
+          "rssi": -100,
+          "hopWidth": 1,
+          "hopCount": 1,
+          "sharedObserver": true,
+          "routeType": 0,
+          "scope": {
+            "kind": "unknown",
+            "name": null
+          }
+        }
+      ],
+      "localObservations": [
+        {
+          "observerId": "shared-observer",
+          "observedAt": "2026-10-28T19:58:00Z",
+          "direction": "rx",
+          "snr": 3,
+          "rssi": -100,
+          "hopWidth": 1,
+          "hopCount": 1,
+          "sharedObserver": true,
+          "routeType": 0,
+          "scope": {
+            "kind": "unknown",
+            "name": null
+          }
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "code": "shared_content_only",
+      "severity": "info",
+      "message": "Shared content in two feeds does not establish an RF route across a border."
+    },
+    {
+      "code": "passive_limits",
+      "severity": "info",
+      "message": "Missing observations are not packet loss or evidence of misconfiguration. SNR describes the listed reception only."
+    },
+    {
+      "code": "reported_radio_hardware_only",
+      "severity": "info",
+      "message": "Reported radio metadata is the latest broker string, which may describe hardware or a profile; it does not verify per-packet settings."
+    },
+    {
+      "code": "shared_observers",
+      "severity": "warning",
+      "message": "Observers present in both sources are excluded from independent overlap."
+    },
+    {
+      "code": "sample_availability",
+      "severity": "info",
+      "message": "Source status describes query and retained-data availability, not a broker connection. Retained evidence is not proof of continuous collection. Local counts cover peer content candidates only."
+    },
+    {
+      "code": "observer_identity_limit",
+      "severity": "info",
+      "message": "Independent overlap means distinct reported observer IDs in these datasets; it does not verify separate physical devices or independent MQTT delivery."
+    }
+  ],
+  "dashboard": {
+    "bucketMinutes": 5,
+    "fromAt": "2026-10-28T19:00:00Z",
+    "toAt": "2026-10-28T20:00:00Z",
+    "local": {
+      "label": "Canadian observers",
+      "status": "available",
+      "records": 1250,
+      "contents": 180,
+      "floodRecords": 100,
+      "truncated": false,
+      "coveredFromAt": null,
+      "recordLimit": 50000,
+      "nodeIndexComplete": true,
+      "repeatersTruncated": false,
+      "excludedRecords": 0,
+      "widths": [
+        {
+          "bytes": 1,
+          "records": 20,
+          "advertisers": 2
+        },
+        {
+          "bytes": 2,
+          "records": 65,
+          "advertisers": 7
+        },
+        {
+          "bytes": 3,
+          "records": 15,
+          "advertisers": 1
+        }
+      ],
+      "unknownAdvertisers": 1,
+      "timeline": [
+        {
+          "at": "2026-10-28T19:00:00Z",
+          "complete": false,
+          "records": null,
+          "oneByte": null,
+          "twoByte": null,
+          "threeByte": null,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:05:00Z",
+          "complete": true,
+          "records": 85,
+          "oneByte": 47,
+          "twoByte": 33,
+          "threeByte": 20,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:10:00Z",
+          "complete": true,
+          "records": 90,
+          "oneByte": 44,
+          "twoByte": 36,
+          "threeByte": 20,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:15:00Z",
+          "complete": true,
+          "records": 95,
+          "oneByte": 41,
+          "twoByte": 39,
+          "threeByte": 20,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:20:00Z",
+          "complete": true,
+          "records": 100,
+          "oneByte": 38,
+          "twoByte": 42,
+          "threeByte": 20,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:25:00Z",
+          "complete": true,
+          "records": 105,
+          "oneByte": 35,
+          "twoByte": 45,
+          "threeByte": 20,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:30:00Z",
+          "complete": true,
+          "records": 110,
+          "oneByte": 32,
+          "twoByte": 48,
+          "threeByte": 20,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:35:00Z",
+          "complete": true,
+          "records": 115,
+          "oneByte": 29,
+          "twoByte": 51,
+          "threeByte": 20,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:40:00Z",
+          "complete": true,
+          "records": 120,
+          "oneByte": 26,
+          "twoByte": 54,
+          "threeByte": 20,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:45:00Z",
+          "complete": true,
+          "records": 125,
+          "oneByte": 23,
+          "twoByte": 57,
+          "threeByte": 20,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:50:00Z",
+          "complete": true,
+          "records": 130,
+          "oneByte": 20,
+          "twoByte": 60,
+          "threeByte": 20,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:55:00Z",
+          "complete": true,
+          "records": 135,
+          "oneByte": 17,
+          "twoByte": 63,
+          "threeByte": 20,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        }
+      ],
+      "scopes": [
+        {
+          "key": "example",
+          "label": "example",
+          "records": 50
+        },
+        {
+          "key": "unscoped",
+          "label": "Unscoped flood",
+          "records": 35
+        },
+        {
+          "key": "transport-zero",
+          "label": "Transport wildcard",
+          "records": 10
+        },
+        {
+          "key": "unknown",
+          "label": "Unresolved scope",
+          "records": 5
+        }
+      ],
+      "regions": [
+        {
+          "iata": "AAA",
+          "records": 1000,
+          "contents": 150
+        },
+        {
+          "iata": "AAD",
+          "records": 250,
+          "contents": 30
+        }
+      ],
+      "repeaters": [
+        {
+          "publicKey": "a000000000000000000000000000000000000000000000000000000000000000",
+          "name": "Canadian test repeater 1",
+          "role": "repeater",
+          "lastSeenAt": "2026-10-28T19:50:00Z",
+          "location": {
+            "lat": 44,
+            "lon": -74,
+            "reportedAt": null
+          },
+          "declaredScopes": {
+            "names": [
+              "example"
+            ],
+            "allowsUnscoped": true,
+            "reportedAt": "2026-10-28T19:45:00Z",
+            "truncated": null
+          },
+          "observedScopes": [
+            {
+              "kind": "named",
+              "name": "example"
+            }
+          ],
+          "observedUnscoped": false,
+          "observedUnknownScope": false,
+          "hopWidths": [
+            2,
+            3
+          ],
+          "sampleForwardedPackets": 20,
+          "lastForwardedAt": "2026-10-28T19:59:00Z",
+          "ownAdvertWidth": 2,
+          "ownAdvertAt": "2026-10-28T19:55:00Z",
+          "carryingAmbiguous": false,
+          "ambiguousWidths": [
+            1
+          ]
+        },
+        {
+          "publicKey": "a111111111111111111111111111111111111111111111111111111111111111",
+          "name": "Canadian test repeater 2",
+          "role": "repeater",
+          "lastSeenAt": "2026-10-28T19:50:00Z",
+          "location": {
+            "lat": 44,
+            "lon": -74,
+            "reportedAt": null
+          },
+          "declaredScopes": {
+            "names": [
+              "example"
+            ],
+            "allowsUnscoped": true,
+            "reportedAt": "2026-10-28T19:45:00Z",
+            "truncated": null
+          },
+          "observedScopes": [
+            {
+              "kind": "named",
+              "name": "example"
+            }
+          ],
+          "observedUnscoped": false,
+          "observedUnknownScope": false,
+          "hopWidths": [
+            2
+          ],
+          "sampleForwardedPackets": 17,
+          "lastForwardedAt": "2026-10-28T19:59:00Z",
+          "ownAdvertWidth": 2,
+          "ownAdvertAt": "2026-10-28T19:55:00Z",
+          "carryingAmbiguous": false,
+          "ambiguousWidths": []
+        },
+        {
+          "publicKey": "a222222222222222222222222222222222222222222222222222222222222222",
+          "name": "Canadian test repeater 3",
+          "role": "repeater",
+          "lastSeenAt": "2026-10-28T19:50:00Z",
+          "location": {
+            "lat": 44,
+            "lon": -74,
+            "reportedAt": null
+          },
+          "declaredScopes": {
+            "names": [
+              "example"
+            ],
+            "allowsUnscoped": true,
+            "reportedAt": "2026-10-28T19:45:00Z",
+            "truncated": null
+          },
+          "observedScopes": [
+            {
+              "kind": "named",
+              "name": "example"
+            }
+          ],
+          "observedUnscoped": false,
+          "observedUnknownScope": false,
+          "hopWidths": [],
+          "sampleForwardedPackets": 14,
+          "lastForwardedAt": "2026-10-28T19:59:00Z",
+          "ownAdvertWidth": 2,
+          "ownAdvertAt": "2026-10-28T19:55:00Z",
+          "carryingAmbiguous": true,
+          "ambiguousWidths": [
+            2
+          ]
+        },
+        {
+          "publicKey": "a333333333333333333333333333333333333333333333333333333333333333",
+          "name": "Canadian test repeater 4",
+          "role": "repeater",
+          "lastSeenAt": "2026-10-28T19:50:00Z",
+          "location": {
+            "lat": 44,
+            "lon": -74,
+            "reportedAt": null
+          },
+          "declaredScopes": {
+            "names": [
+              "example"
+            ],
+            "allowsUnscoped": true,
+            "reportedAt": "2026-10-28T19:45:00Z",
+            "truncated": null
+          },
+          "observedScopes": [
+            {
+              "kind": "named",
+              "name": "example"
+            }
+          ],
+          "observedUnscoped": false,
+          "observedUnknownScope": false,
+          "hopWidths": [
+            2
+          ],
+          "sampleForwardedPackets": 11,
+          "lastForwardedAt": "2026-10-28T19:59:00Z",
+          "ownAdvertWidth": null,
+          "ownAdvertAt": null,
+          "carryingAmbiguous": false,
+          "ambiguousWidths": []
+        }
+      ],
+      "radio": {
+        "status": "available",
+        "txAirtimePct": 4.5,
+        "rxAirtimePct": 12.8,
+        "reportingObservers": 4,
+        "excludedIntervals": 1,
+        "truncated": false,
+        "observers": [
+          {
+            "id": "local-0",
+            "name": "Canadian reporting radio 1",
+            "iata": "AAA",
+            "txAirtimePct": 6,
+            "rxAirtimePct": 15,
+            "validSeconds": 3300,
+            "latestAt": "2026-10-28T19:55:00Z",
+            "reportedCanRelay": true
+          },
+          {
+            "id": "local-1",
+            "name": "Canadian reporting radio 2",
+            "iata": "AAA",
+            "txAirtimePct": 5,
+            "rxAirtimePct": 13,
+            "validSeconds": 3300,
+            "latestAt": "2026-10-28T19:55:00Z",
+            "reportedCanRelay": false
+          },
+          {
+            "id": "local-2",
+            "name": "Canadian reporting radio 3",
+            "iata": "AAA",
+            "txAirtimePct": 4,
+            "rxAirtimePct": 11,
+            "validSeconds": 3300,
+            "latestAt": "2026-10-28T19:55:00Z",
+            "reportedCanRelay": false
+          }
+        ]
+      }
+    },
+    "peer": {
+      "label": "Peer observers",
+      "status": "available",
+      "records": 850,
+      "contents": 90,
+      "floodRecords": 100,
+      "truncated": false,
+      "coveredFromAt": null,
+      "recordLimit": 50000,
+      "nodeIndexComplete": true,
+      "repeatersTruncated": false,
+      "excludedRecords": 0,
+      "widths": [
+        {
+          "bytes": 1,
+          "records": 70,
+          "advertisers": 7
+        },
+        {
+          "bytes": 2,
+          "records": 20,
+          "advertisers": 2
+        },
+        {
+          "bytes": 3,
+          "records": 10,
+          "advertisers": 1
+        }
+      ],
+      "unknownAdvertisers": 1,
+      "timeline": [
+        {
+          "at": "2026-10-28T19:00:00Z",
+          "complete": false,
+          "records": null,
+          "oneByte": null,
+          "twoByte": null,
+          "threeByte": null,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:05:00Z",
+          "complete": true,
+          "records": 85,
+          "oneByte": 69,
+          "twoByte": 21,
+          "threeByte": 10,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:10:00Z",
+          "complete": true,
+          "records": 90,
+          "oneByte": 68,
+          "twoByte": 22,
+          "threeByte": 10,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:15:00Z",
+          "complete": true,
+          "records": 95,
+          "oneByte": 67,
+          "twoByte": 23,
+          "threeByte": 10,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:20:00Z",
+          "complete": true,
+          "records": 100,
+          "oneByte": 66,
+          "twoByte": 24,
+          "threeByte": 10,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:25:00Z",
+          "complete": true,
+          "records": 105,
+          "oneByte": 65,
+          "twoByte": 25,
+          "threeByte": 10,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:30:00Z",
+          "complete": true,
+          "records": 110,
+          "oneByte": 64,
+          "twoByte": 26,
+          "threeByte": 10,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:35:00Z",
+          "complete": true,
+          "records": 115,
+          "oneByte": 63,
+          "twoByte": 27,
+          "threeByte": 10,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:40:00Z",
+          "complete": true,
+          "records": 120,
+          "oneByte": 62,
+          "twoByte": 28,
+          "threeByte": 10,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:45:00Z",
+          "complete": true,
+          "records": 125,
+          "oneByte": 61,
+          "twoByte": 29,
+          "threeByte": 10,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:50:00Z",
+          "complete": true,
+          "records": 130,
+          "oneByte": 60,
+          "twoByte": 30,
+          "threeByte": 10,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        },
+        {
+          "at": "2026-10-28T19:55:00Z",
+          "complete": true,
+          "records": 135,
+          "oneByte": 59,
+          "twoByte": 31,
+          "threeByte": 10,
+          "namedScope": 40,
+          "unscoped": 50,
+          "unresolvedScope": 5,
+          "transportWildcard": 5
+        }
+      ],
+      "scopes": [
+        {
+          "key": "example",
+          "label": "example",
+          "records": 20
+        },
+        {
+          "key": "unscoped",
+          "label": "Unscoped flood",
+          "records": 65
+        },
+        {
+          "key": "transport-zero",
+          "label": "Transport wildcard",
+          "records": 10
+        },
+        {
+          "key": "unknown",
+          "label": "Unresolved scope",
+          "records": 5
+        }
+      ],
+      "regions": [
+        {
+          "iata": "BBB",
+          "records": 650,
+          "contents": 70
+        },
+        {
+          "iata": "CCC",
+          "records": 200,
+          "contents": 20
+        }
+      ],
+      "repeaters": [
+        {
+          "publicKey": "b000000000000000000000000000000000000000000000000000000000000000",
+          "name": "Peer test repeater 1",
+          "role": "repeater",
+          "lastSeenAt": "2026-10-28T19:50:00Z",
+          "location": {
+            "lat": 44,
+            "lon": -74,
+            "reportedAt": null
+          },
+          "declaredScopes": {
+            "names": [
+              "example"
+            ],
+            "allowsUnscoped": true,
+            "reportedAt": "2026-10-28T19:45:00Z",
+            "truncated": null
+          },
+          "observedScopes": [
+            {
+              "kind": "named",
+              "name": "example"
+            }
+          ],
+          "observedUnscoped": false,
+          "observedUnknownScope": false,
+          "hopWidths": [
+            2,
+            3
+          ],
+          "sampleForwardedPackets": 20,
+          "lastForwardedAt": "2026-10-28T19:59:00Z",
+          "ownAdvertWidth": 1,
+          "ownAdvertAt": "2026-10-28T19:55:00Z",
+          "carryingAmbiguous": false,
+          "ambiguousWidths": [
+            1
+          ]
+        },
+        {
+          "publicKey": "b111111111111111111111111111111111111111111111111111111111111111",
+          "name": "Peer test repeater 2",
+          "role": "repeater",
+          "lastSeenAt": "2026-10-28T19:50:00Z",
+          "location": {
+            "lat": 44,
+            "lon": -74,
+            "reportedAt": null
+          },
+          "declaredScopes": {
+            "names": [
+              "example"
+            ],
+            "allowsUnscoped": true,
+            "reportedAt": "2026-10-28T19:45:00Z",
+            "truncated": null
+          },
+          "observedScopes": [
+            {
+              "kind": "named",
+              "name": "example"
+            }
+          ],
+          "observedUnscoped": false,
+          "observedUnknownScope": false,
+          "hopWidths": [
+            2
+          ],
+          "sampleForwardedPackets": 17,
+          "lastForwardedAt": "2026-10-28T19:59:00Z",
+          "ownAdvertWidth": 1,
+          "ownAdvertAt": "2026-10-28T19:55:00Z",
+          "carryingAmbiguous": false,
+          "ambiguousWidths": []
+        },
+        {
+          "publicKey": "b222222222222222222222222222222222222222222222222222222222222222",
+          "name": "Peer test repeater 3",
+          "role": "repeater",
+          "lastSeenAt": "2026-10-28T19:50:00Z",
+          "location": {
+            "lat": 44,
+            "lon": -74,
+            "reportedAt": null
+          },
+          "declaredScopes": {
+            "names": [
+              "example"
+            ],
+            "allowsUnscoped": true,
+            "reportedAt": "2026-10-28T19:45:00Z",
+            "truncated": null
+          },
+          "observedScopes": [
+            {
+              "kind": "named",
+              "name": "example"
+            }
+          ],
+          "observedUnscoped": false,
+          "observedUnknownScope": false,
+          "hopWidths": [],
+          "sampleForwardedPackets": 14,
+          "lastForwardedAt": "2026-10-28T19:59:00Z",
+          "ownAdvertWidth": 1,
+          "ownAdvertAt": "2026-10-28T19:55:00Z",
+          "carryingAmbiguous": true,
+          "ambiguousWidths": [
+            2
+          ]
+        },
+        {
+          "publicKey": "b333333333333333333333333333333333333333333333333333333333333333",
+          "name": "Peer test repeater 4",
+          "role": "repeater",
+          "lastSeenAt": "2026-10-28T19:50:00Z",
+          "location": {
+            "lat": 44,
+            "lon": -74,
+            "reportedAt": null
+          },
+          "declaredScopes": {
+            "names": [
+              "example"
+            ],
+            "allowsUnscoped": true,
+            "reportedAt": "2026-10-28T19:45:00Z",
+            "truncated": null
+          },
+          "observedScopes": [
+            {
+              "kind": "named",
+              "name": "example"
+            }
+          ],
+          "observedUnscoped": false,
+          "observedUnknownScope": false,
+          "hopWidths": [
+            2
+          ],
+          "sampleForwardedPackets": 11,
+          "lastForwardedAt": "2026-10-28T19:59:00Z",
+          "ownAdvertWidth": null,
+          "ownAdvertAt": null,
+          "carryingAmbiguous": false,
+          "ambiguousWidths": []
+        }
+      ],
+      "radio": {
+        "status": "available",
+        "txAirtimePct": 1.7,
+        "rxAirtimePct": 8.6,
+        "reportingObservers": 3,
+        "excludedIntervals": 1,
+        "truncated": false,
+        "observers": [
+          {
+            "id": "peer-0",
+            "name": "Peer reporting radio 1",
+            "iata": "BBB",
+            "txAirtimePct": 3,
+            "rxAirtimePct": 10,
+            "validSeconds": 3300,
+            "latestAt": "2026-10-28T19:55:00Z",
+            "reportedCanRelay": true
+          },
+          {
+            "id": "peer-1",
+            "name": "Peer reporting radio 2",
+            "iata": "BBB",
+            "txAirtimePct": 2,
+            "rxAirtimePct": 9,
+            "validSeconds": 3300,
+            "latestAt": "2026-10-28T19:55:00Z",
+            "reportedCanRelay": false
+          },
+          {
+            "id": "peer-2",
+            "name": "Peer reporting radio 3",
+            "iata": "BBB",
+            "txAirtimePct": 1,
+            "rxAirtimePct": 8,
+            "validSeconds": 3300,
+            "latestAt": "2026-10-28T19:55:00Z",
+            "reportedCanRelay": false
+          }
+        ]
+      }
+    },
+    "sharedContents": 35,
+    "independentSharedContents": 30,
+    "regionPairs": [
+      {
+        "localIata": "AAA",
+        "peerIata": "BBB",
+        "contents": 24
+      },
+      {
+        "localIata": "AAA",
+        "peerIata": "CCC",
+        "contents": 8
+      },
+      {
+        "localIata": "AAD",
+        "peerIata": "BBB",
+        "contents": 5
+      }
+    ],
+    "identityComplete": true,
+    "regionPairsTruncated": false
+  }
+}

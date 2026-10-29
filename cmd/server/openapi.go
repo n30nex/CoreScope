@@ -158,6 +158,14 @@ func routeDescriptions() map[string]routeMeta {
 			QueryParams: []paramMeta{
 				{Name: "window", Description: "Time window: 1h, 24h, or 7d (default 24h)", Type: "string"},
 			}},
+		"GET /api/cross-border": {Summary: "Isolated cross-network diagnostics", Description: "Public opt-in comparison against a separately named read-only peer database. The dashboard view adds independently sampled path-width adoption, scoped flood evidence, regional content overlap, repeater carrying and weighted reported-radio airtime. Stored observer/path records are deduplicated first-recorded evidence, not RF arrival rates. Packet details remain peer-primary and retain differently scoped local content matches. Source availability is not broker-connected proof. Shared identities are excluded from independent overlap; matching content and airtime do not establish RF border transit, loss, device configuration or national congestion causation. Radio metadata may describe hardware or a profile; reference profiles remain separate guidance. HTTP 200 also carries disabled, selection_required, partial or unavailable states; invalid filters return 400. Credentials and raw/decrypted message content are never returned.", Tag: "analytics",
+			QueryParams: []paramMeta{
+				{Name: "view", Description: "Omit for legacy peer-first evidence, or dashboard for independent source aggregates and visual comparisons", Type: "string"},
+				{Name: "localIata", Description: "Comma-separated explicit observer IATA labels within the operator's local allowlist; blank uses configured defaults", Type: "string"},
+				{Name: "peerIata", Description: "Comma-separated explicit peer observer IATA labels; blank uses configured defaults", Type: "string"},
+				{Name: "scope", Description: "all, unscoped, unknown, or a case-preserved name; filters both dashboard overview samples, but packet details retain differently scoped local matches. Radio reports cover all scopes", Type: "string"},
+				{Name: "windowMinutes", Description: "15, 60, 180 or 360, up to the operator's maximum; default 60", Type: "integer"},
+			}},
 
 		// Analytics
 		"GET /api/analytics/rf":              {Summary: "RF analytics", Description: "SNR/RSSI distributions and statistics.", Tag: "analytics"},

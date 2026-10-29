@@ -23,6 +23,7 @@
       "tests/e2e/test-channels-ws-batch-e2e.js",
       "tests/e2e/test-channels-ws-race-1498-e2e.js",
       "tests/e2e/test-charts-fluid-1058-e2e.js",
+      "tests/e2e/test-cross-border-e2e.js",
       "tests/e2e/test-customize-branding-e2e.js",
       "tests/e2e/test-customize-display-e2e.js",
       "tests/e2e/test-customize-export-e2e.js",

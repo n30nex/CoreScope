@@ -49,6 +49,8 @@ node tests/unit/test-compare-flood-filter.js
 node tests/unit/test-compare-overlap.js
 node tests/unit/test-confidence-indicator.js
 node tests/unit/test-coverage-gate.js
+node tests/unit/test-cross-border.js
+node tests/unit/test-cross-border-wait.js
 node tests/unit/test-customizer-v2.js
 node tests/unit/test-drag-manager.js
 node tests/unit/test-direct-rf-heard-by.js

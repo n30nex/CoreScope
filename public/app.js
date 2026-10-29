@@ -1131,6 +1131,7 @@ registerPage('tools-landing', {
         '<div class="tools-menu">' +
           '<a href="#/tools/path-inspector" class="tools-card"><h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-magnifying-glass"/></svg> Path Inspector</h3><p>Resolve prefix paths to candidate full-pubkey routes with confidence scoring.</p></a>' +
           '<a href="#/tools/trace/" class="tools-card"><h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-broadcast"/></svg> Trace Viewer</h3><p>View detailed packet traces by hash.</p></a>' +
+          '<a href="#/cross-border" class="tools-card"><h3>Border links</h3><p>Compare path-width adoption, scopes, regional matches and radio airtime with live charts and repeater evidence.</p></a>' +
         '</div>' +
       '</div>';
   },
@@ -1227,7 +1228,7 @@ function navigate() {
 
   // Update nav active state
   document.querySelectorAll('.nav-link[data-route]').forEach(el => {
-    el.classList.toggle('active', el.dataset.route === basePage || (el.dataset.route === 'tools' && (basePage === 'traces' || basePage === 'path-inspector' || basePage === 'tools-landing')));
+    el.classList.toggle('active', el.dataset.route === basePage || (el.dataset.route === 'tools' && (basePage === 'traces' || basePage === 'path-inspector' || basePage === 'tools-landing' || basePage === 'cross-border')));
   });
   // Update "More" button to show active state if a low-priority page is selected
   var moreBtn = document.getElementById('navMoreBtn');
@@ -1236,6 +1237,9 @@ function navigate() {
     var hasActiveMore = moreMenu && moreMenu.querySelector('.nav-link.active');
     moreBtn.classList.toggle('active', !!hasActiveMore);
   }
+
+  // Let an active page restore display-only URL state without discarding its data.
+  if (currentPage === basePage && pages[basePage]?.updateRoute?.(routeParam) === true) return;
 
   if (currentPage && pages[currentPage]?.destroy) {
     pages[currentPage].destroy();
