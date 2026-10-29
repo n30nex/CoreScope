@@ -38,7 +38,7 @@ func TestCrossBorderDashboardReviewPrivacyCannotEraseCappedCoverageBoundary(t *t
 		if i == 12 {
 			stamp, observer = now-7200, 1
 		}
-		crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type) VALUES($1,$2,'1500ff',1,5)`, i, fmt.Sprint(i))
+		crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,first_seen) VALUES($1,$2,'1500ff',1,5,$3)`, i, fmt.Sprint(i), crossBorderTime(stamp))
 		crossBorderExec(t, peer, `INSERT INTO observations(transmission_id,observer_idx,timestamp,direction,raw_hex) VALUES($1,$2,$3,'rx','1500ff')`, i, observer, stamp)
 	}
 	got, _ := dashboardReviewGet(t, srv)
@@ -137,7 +137,7 @@ func TestCrossBorderDashboardReviewInactiveCollisionAndPrivacy(t *testing.T) {
 	crossBorderExec(t, peer, `INSERT INTO nodes(public_key,name,role,last_seen) VALUES($1,'Visible repeater','repeater',$2),($3,'Current client','client',$2)`, a, crossBorderTime(now), client)
 	crossBorderExec(t, peer, `INSERT INTO inactive_nodes(public_key,name,role) VALUES($1,'Private retained identity','client'),($2,'Old repeater role','repeater')`, hidden, client)
 	crossBorderExec(t, peer, `INSERT INTO observers(rowid,id,name,iata) VALUES(1,'reader','Visible radio','BBB'),(2,$1,'Ordinary name','BBB')`, hidden)
-	crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,from_pubkey) VALUES(1,'advert','1140ff',1,4,$1),(2,'collision','1541aabbff',1,5,NULL),(3,'client-advert','1180ff',1,4,$2),(4,'private-content','1500ff',1,5,NULL)`, a, client)
+	crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,from_pubkey,first_seen) VALUES(1,'advert','1140ff',1,4,$1,$3),(2,'collision','1541aabbff',1,5,NULL,$3),(3,'client-advert','1180ff',1,4,$2,$3),(4,'private-content','1500ff',1,5,NULL,$3)`, a, client, crossBorderTime(now))
 	crossBorderExec(t, peer, `INSERT INTO observations(transmission_id,observer_idx,timestamp,direction,raw_hex) VALUES(1,1,$1,'rx','1140ff'),(2,1,$1,'rx','1541aabbff'),(3,1,$1,'rx','1180ff'),(4,2,$1,'rx','1500ff')`, now)
 	crossBorderExec(t, peer, `INSERT INTO observer_metrics(observer_id,timestamp,tx_air_secs,rx_air_secs) VALUES('reader',$1,100,200),('reader',$2,130,260),($3,$1,0,0),($3,$2,270,270)`, crossBorderTime(now-1200), crossBorderTime(now-900), hidden)
 	got, body := dashboardReviewGet(t, srv)

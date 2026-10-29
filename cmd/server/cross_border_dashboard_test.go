@@ -226,7 +226,7 @@ func TestCrossBorderDashboardOverviewScopeKeepsOtherScopePacketDetails(t *testin
 			scope = crossBorderString("example")
 		}
 		crossBorderExec(t, db, `INSERT INTO observers(rowid,id,name,iata) VALUES(1,$1,'Visible',$2)`, id, region)
-		crossBorderExec(t, db, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,scope_name) VALUES(1,'shared',$1,1,5,$2)`, raw, scope)
+		crossBorderExec(t, db, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,scope_name,first_seen) VALUES(1,'shared',$1,1,5,$2,$3)`, raw, scope, crossBorderTime(now))
 		crossBorderExec(t, db, `INSERT INTO observations(transmission_id,observer_idx,timestamp,direction,raw_hex) VALUES(1,1,$1,'rx',$2)`, now, raw)
 	}
 	w := httptest.NewRecorder()
@@ -312,7 +312,7 @@ func TestCrossBorderDashboardRealCollisionIndexIncludesHiddenNonDisplayedNodes(t
 	now := time.Now().Unix() - 10
 	crossBorderExec(t, peer, `INSERT INTO observers(rowid,id,name,iata) VALUES(1,'peer','Visible','BBB')`)
 	crossBorderExec(t, peer, `INSERT INTO nodes(public_key,name,role,last_seen) VALUES($1,'Visible repeater','repeater',$2),($3,'Private other candidate','client',$4)`, a, crossBorderTime(now), hidden, crossBorderTime(now-1000))
-	crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,from_pubkey) VALUES(1,'advert','1140ff',1,4,$1),(2,'collision','1541aabbff',1,5,NULL)`, a)
+	crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,from_pubkey,first_seen) VALUES(1,'advert','1140ff',1,4,$1,$2),(2,'collision','1541aabbff',1,5,NULL,$2)`, a, crossBorderTime(now))
 	crossBorderExec(t, peer, `INSERT INTO observations(transmission_id,observer_idx,timestamp,direction,raw_hex) VALUES(1,1,$1,'rx','1140ff'),(2,1,$1,'rx','1541aabbff')`, now)
 	w := httptest.NewRecorder()
 	srv.handleCrossBorder(w, httptest.NewRequest("GET", "/api/cross-border?view=dashboard", nil))
@@ -344,7 +344,7 @@ func TestCrossBorderDashboardSQLNodeIndexCapFailsClosed(t *testing.T) {
 	crossBorderExec(t, peer, `INSERT INTO nodes(public_key,name,role) VALUES($1,'Visible','repeater')`, a)
 	fill := testNativeSQL(`WITH RECURSIVE n(i) AS(VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<50000) INSERT INTO nodes(public_key,role) SELECT 'bbbb'||printf('%060x',i),'client' FROM n`, `INSERT INTO nodes(public_key,role) SELECT 'bbbb'||lpad(to_hex(i::bigint),60,'0'),'client' FROM generate_series(1,50000) i`)
 	crossBorderExec(t, peer, fill)
-	crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,from_pubkey) VALUES(1,'advert','1140ff',1,4,$1),(2,'forward','1541aabbff',1,5,NULL)`, a)
+	crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,from_pubkey,first_seen) VALUES(1,'advert','1140ff',1,4,$1,$2),(2,'forward','1541aabbff',1,5,NULL,$2)`, a, crossBorderTime(now))
 	crossBorderExec(t, peer, `INSERT INTO observations(transmission_id,observer_idx,timestamp,direction,raw_hex) VALUES(1,1,$1,'rx','1140ff'),(2,1,$1,'rx','1541aabbff')`, now)
 	w := httptest.NewRecorder()
 	srv.handleCrossBorder(w, httptest.NewRequest("GET", "/api/cross-border?view=dashboard", nil))
