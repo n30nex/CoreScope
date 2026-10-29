@@ -141,7 +141,7 @@
       '<div class="cb-reference"><dt>All Canadian matches</dt><dd id="cb-local-count">Unknown</dd><small>Among peer packets; includes shared-identity matches</small></div></dl>' +
       '<details id="cb-quality" class="cb-quality"><summary>Data quality and limits</summary><div class="cb-quality-body">' +
       '<p class="cb-note">Missing observations are not packet loss or evidence of misconfiguration. Matches use packet content; observers present in both feeds do not count as distinct observers.</p>' +
-      '<p class="cb-note">Retained evidence dates do not prove continuous collection. Declared scopes are the latest reports; observed forwarding uses unambiguous flood last-hop evidence. Radio hardware and relay reports do not establish per-packet settings.</p>' +
+      '<p class="cb-note">Retained evidence dates do not prove continuous collection. Declared scopes are the latest reports; observed forwarding uses unambiguous flood last-hop evidence. Reported radio metadata may describe hardware or a profile; radio and relay reports do not verify per-packet settings.</p>' +
       '<p id="cb-completeness" class="cb-note"></p><div class="cb-sources"><section><h3>Peer source</h3><p id="cb-peer-quality" class="cb-note"></p>' +
       '<p id="cb-peer-profile" class="cb-profile cb-note" hidden><strong>Community recommendation · reference only</strong><a></a><span></span></p></section>' +
       '<section class="cb-reference"><h3>Canadian reference source</h3><p id="cb-local-quality" class="cb-note"></p>' +
@@ -162,9 +162,9 @@
       table('cb-repeaters', 'Peer repeater scope reports and observed evidence', ['Repeater', 'Latest declared scopes', 'Observed forwarding', 'Hop widths', 'Latest evidence']) +
       '<p id="cb-repeaters-empty" hidden>No peer repeater metadata available for this selection.</p></section>' +
       '<section aria-labelledby="cb-observers-title"><h2 id="cb-observers-title">Peer observers · reported settings</h2>' +
-      '<p class="cb-note">Latest hardware and relay reports; per-device RF settings are unknown.</p>' +
+      '<p class="cb-note">Reported radio metadata is the latest broker string, which may describe hardware or a profile. It does not verify per-packet settings.</p>' +
       '<p id="cb-observer-count" class="cb-note"></p>' +
-      table('cb-observers', 'Peer observer provenance and latest reported settings', ['Observer', 'Reported radio hardware', 'Latest relay report', 'Sample evidence', 'Last seen / location']) +
+      table('cb-observers', 'Peer observer provenance and latest reported settings', ['Observer', 'Reported radio metadata', 'Latest relay report', 'Sample evidence', 'Last seen / location']) +
       '<p id="cb-observers-empty" hidden>No peer observer metadata available for this selection.</p></section></div></div>';
   }
 

@@ -22,7 +22,7 @@ func crossBorderBase(cfg CrossBorderConfig, filters CrossBorderFilters, now time
 		Findings: []CrossBorderFinding{
 			{Code: "shared_content_only", Severity: "info", Message: "Matching content in two samples does not establish an RF route across a border or RF latency."},
 			{Code: "passive_limits", Severity: "info", Message: "Missing observations are not packet loss or evidence of misconfiguration. SNR describes the listed reception only."},
-			{Code: "reported_radio_hardware_only", Severity: "info", Message: "Radio descriptions identify reported hardware; actual frequency, bandwidth, spreading factor and coding rate are not available."},
+			{Code: "reported_radio_hardware_only", Severity: "info", Message: "Reported radio metadata is the latest broker string, which may describe hardware or a profile; it does not verify per-packet settings."},
 			{Code: "sample_availability", Severity: "info", Message: "Source status describes query and retained-data availability, not a broker connection. Retained evidence is not proof of continuous collection. Local counts cover peer content candidates only."},
 			{Code: "observer_identity_limit", Severity: "info", Message: "Independent overlap means distinct reported observer IDs in these datasets; it does not verify separate physical devices or independent MQTT delivery."},
 		}}

@@ -169,7 +169,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       catch (error) { failed++; throw error; }
     }
 
-    await check('Tools keyboard entry, one bulk request, peer-only evidence and honest hardware labels', async () => {
+    await check('Tools keyboard entry, one bulk request, peer-only evidence and reported radio metadata labels', async () => {
       await page.goto(BASE + '/#/tools');
       const link = page.getByRole('link', { name: /Border links/ });
       await link.focus(); await page.keyboard.press('Enter'); await ready();
@@ -178,7 +178,11 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.match(page.url(), /localIata=AAA/);
       assert.match(page.url(), /peerIata=BBB/);
       assert.strictEqual(await page.locator('.cb-page a[href^="#/packets"], .cb-page a[href^="#/nodes"]').count(), 0);
-      assert.match(await page.locator('#cb-observers').innerText(), /SX1262/);
+      assert.match(await page.locator('#cb-observers').innerText(), /910\.525,62\.5,7,8/);
+      assert.match(await page.locator('#cb-observers').innerText(), /910\.525024,62\.5,7,5/);
+      assert.strictEqual(await page.getByRole('columnheader', { name: 'Reported radio metadata', exact: true }).count(), 1);
+      assert.match(await page.locator('section[aria-labelledby="cb-observers-title"]').innerText(), /latest broker string[\s\S]*hardware or a profile[\s\S]*does not verify per-packet settings/);
+      assert.match(await page.locator('#cb-findings').textContent(), /Reported radio metadata[\s\S]*hardware or a profile[\s\S]*does not verify per-packet settings/);
       assert.match(await page.locator('#cb-observers').innerText(), /Reported: Unknown/);
       assert.strictEqual(await page.locator('.cb-page img').count(), 0);
       assert.match(await page.locator('#cb-packets').innerText(), /Match · distinct observers/);

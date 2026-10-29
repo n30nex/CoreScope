@@ -152,7 +152,7 @@
           "name": null
         }
       ],
-      "latestReportedRadioHardware": "SX1262",
+      "latestReportedRadioHardware": "910.525,62.5,7,8",
       "radioHardwareReportedAt": null
     },
     {
@@ -175,7 +175,7 @@
           "name": null
         }
       ],
-      "latestReportedRadioHardware": null,
+      "latestReportedRadioHardware": "910.525024,62.5,7,5",
       "radioHardwareReportedAt": null
     }
   ],
@@ -357,7 +357,7 @@
     {
       "code": "reported_radio_hardware_only",
       "severity": "info",
-      "message": "Radio descriptions identify reported hardware; actual frequency, bandwidth, spreading factor and coding rate are not available."
+      "message": "Reported radio metadata is the latest broker string, which may describe hardware or a profile; it does not verify per-packet settings."
     },
     {
       "code": "shared_observers",

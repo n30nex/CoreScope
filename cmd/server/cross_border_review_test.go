@@ -162,3 +162,34 @@ func TestCrossBorderReviewFutureRowsCannotConsumeObservationCap(t *testing.T) {
 		}
 	}
 }
+
+func TestCrossBorderReportedRadioMetadataPreservesBrokerStrings(t *testing.T) {
+	srv, _, peer := crossBorderReviewService(t, crossBorderTestConfig())
+	want := map[string]string{"profile-a": "910.525,62.5,7,8", "profile-b": "910.525024,62.5,7,5", "hardware": "SX1262"}
+	i := 0
+	for id, radio := range want {
+		i++
+		crossBorderExec(t, peer, `INSERT INTO observers(rowid,id,iata,radio) VALUES($1,$2,'BBB',$3)`, i, id, radio)
+	}
+	got, body := crossBorderReviewResponse(t, srv)
+	if len(got.PeerObservers) != len(want) {
+		t.Fatalf("reported radio metadata missing: %+v", got.PeerObservers)
+	}
+	for _, observer := range got.PeerObservers {
+		if observer.LatestReportedRadioHardware == nil || *observer.LatestReportedRadioHardware != want[observer.ID] || observer.RadioHardwareReportedAt != nil {
+			t.Fatalf("broker string was parsed, rewritten or assigned an inferred time: %+v", observer)
+		}
+	}
+	if !strings.Contains(body, `"latestReportedRadioHardware":"910.525,62.5,7,8"`) || !strings.Contains(body, `"radioHardwareReportedAt":null`) {
+		t.Fatal("legacy public radio fields changed")
+	}
+	for _, finding := range got.Findings {
+		if finding.Code == "reported_radio_hardware_only" {
+			if !strings.Contains(finding.Message, "Reported radio metadata") || !strings.Contains(finding.Message, "hardware or a profile") || !strings.Contains(finding.Message, "does not verify per-packet settings") {
+				t.Fatalf("radio metadata incorrectly described as hardware-only: %q", finding.Message)
+			}
+			return
+		}
+	}
+	t.Fatal("radio metadata qualification missing")
+}
