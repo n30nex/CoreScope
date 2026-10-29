@@ -369,11 +369,13 @@ func (svc *crossBorderService) loadReport(ctx context.Context, f CrossBorderFilt
 	if err != nil {
 		return CrossBorderResponse{}, err
 	}
-	peer, err := peerDB.readCrossBorder(ctx, f.PeerIATA, since, svc.cfg, nil)
+	peer, err := peerDB.readCrossBorder(ctx, f.PeerIATA, since, now, svc.cfg, nil)
 	if err != nil {
 		return CrossBorderResponse{}, err
 	}
-	applyCrossBorderPrivacy(&peer, svc.serverCfg)
+	if err := applyCrossBorderPrivacy(ctx, peerDB, &peer, svc.serverCfg); err != nil {
+		return CrossBorderResponse{}, err
+	}
 	hashSet := map[string]bool{}
 	for _, row := range peer.Observations {
 		if strings.EqualFold(strings.TrimSpace(row.Direction), "tx") {
@@ -389,7 +391,7 @@ func (svc *crossBorderService) loadReport(ctx context.Context, f CrossBorderFilt
 		hashes = append(hashes, hash)
 	}
 	sort.Strings(hashes)
-	local, err := svc.local.readCrossBorder(ctx, f.LocalIATA, since, svc.cfg, hashes)
+	local, err := svc.local.readCrossBorder(ctx, f.LocalIATA, since, now, svc.cfg, hashes)
 	if err != nil {
 		if ctx.Err() != nil {
 			return CrossBorderResponse{}, ctx.Err()
@@ -397,35 +399,49 @@ func (svc *crossBorderService) loadReport(ctx context.Context, f CrossBorderFilt
 		local = crossBorderSnapshot{}
 	}
 	if local.Available {
-		ids := map[string]bool{}
-		for _, o := range peer.Observers {
-			ids[crossBorderID(o.ID)] = true
+		if err := applyCrossBorderPrivacy(ctx, svc.local, &local, svc.serverCfg); err != nil {
+			return CrossBorderResponse{}, err
 		}
-		for _, o := range peer.Observations {
-			ids[crossBorderID(o.ObserverID)] = true
+		// Display metadata is capped and region-selected. Check the bounded
+		// candidate IDs against each opposite source's full observer metadata.
+		local.SharedIdentityChecked = true
+		peerIDs, peerErr := svc.local.crossBorderSharedIDs(ctx, crossBorderSnapshotIDs(peer))
+		localIDs, localErr := peerDB.crossBorderSharedIDs(ctx, crossBorderSnapshotIDs(local))
+		if ctx.Err() != nil {
+			return CrossBorderResponse{}, ctx.Err()
 		}
-		local.SharedObserverIDs, err = svc.local.crossBorderSharedIDs(ctx, ids)
-		if err != nil {
-			if ctx.Err() != nil {
-				return CrossBorderResponse{}, ctx.Err()
-			}
-			local.Available = false
-		} else {
-			local.SharedIdentityComplete = true
-		}
-		applyCrossBorderPrivacy(&local, svc.serverCfg)
+		local.SharedObserverIDs = append(peerIDs, localIDs...)
+		local.SharedIdentityComplete = peerErr == nil && localErr == nil
 	}
 	return buildCrossBorder(ctx, svc.cfg, f, local, peer, now)
 }
 
-func applyCrossBorderPrivacy(snapshot *crossBorderSnapshot, cfg *Config) {
-	if cfg == nil {
-		return
+func crossBorderSnapshotIDs(snapshot crossBorderSnapshot) map[string]bool {
+	ids := map[string]bool{}
+	for _, o := range snapshot.Observers {
+		ids[crossBorderID(o.ID)] = true
 	}
-	hidden := map[string]bool{}
+	for _, o := range snapshot.Observations {
+		ids[crossBorderID(o.ObserverID)] = true
+	}
+	return ids
+}
+
+func applyCrossBorderPrivacy(ctx context.Context, db *DB, snapshot *crossBorderSnapshot, cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	ids := crossBorderSnapshotIDs(*snapshot)
+	for _, n := range snapshot.Nodes {
+		ids[crossBorderID(n.PublicKey)] = true
+	}
+	hidden, err := db.crossBorderHiddenIDs(ctx, ids, cfg)
+	if err != nil {
+		return err
+	}
 	for i := range snapshot.Nodes {
 		n := &snapshot.Nodes[i]
-		n.Hidden = cfg.IsBlacklisted(n.PublicKey) || cfg.IsNameHidden(n.Name)
+		n.Hidden = cfg.IsBlacklisted(n.PublicKey) || cfg.IsNameHidden(n.Name) || hidden[crossBorderID(n.PublicKey)]
 		if n.Hidden {
 			hidden[crossBorderID(n.PublicKey)] = true
 		}
@@ -446,4 +462,5 @@ func applyCrossBorderPrivacy(snapshot *crossBorderSnapshot, cfg *Config) {
 		}
 	}
 	snapshot.Observations = rows
+	return nil
 }

@@ -21,6 +21,7 @@
       ],
       "oldestStoredObservationAt": "2026-10-27T12:00:00Z",
       "latestObservationAt": "2026-10-28T19:59:10Z",
+      "latestAfterSnapshotAt": null,
       "ageSeconds": 50,
       "rowsRead": 2,
       "excludedTxObservations": 0,
@@ -39,6 +40,7 @@
       ],
       "oldestStoredObservationAt": "2026-10-28T18:00:00Z",
       "latestObservationAt": "2026-10-28T19:59:00Z",
+      "latestAfterSnapshotAt": null,
       "ageSeconds": 60,
       "rowsRead": 3,
       "excludedTxObservations": 0,
@@ -115,6 +117,7 @@
     "localReferencePackets": 2,
     "independentSharedPackets": 1,
     "sharedObserverOnlyPackets": 1,
+    "sharedFeedIdentityPackets": 0,
     "notSeenLocallyPackets": 1,
     "duplicateObserverIds": 1,
     "identityUnverifiedPackets": 0

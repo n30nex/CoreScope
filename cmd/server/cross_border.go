@@ -50,6 +50,7 @@ type CrossBorderSource struct {
 	SelectionIATA                []string                     `json:"selectionIata"`
 	OldestStoredObservationAt    *string                      `json:"oldestStoredObservationAt"`
 	LatestObservationAt          *string                      `json:"latestObservationAt"`
+	LatestAfterSnapshotAt        *string                      `json:"latestAfterSnapshotAt"`
 	AgeSeconds                   *float64                     `json:"ageSeconds"`
 	RowsRead                     int                          `json:"rowsRead"`
 	ExcludedTXObservations       int                          `json:"excludedTxObservations"`
@@ -103,6 +104,7 @@ type CrossBorderSummary struct {
 	LocalReferencePackets     int `json:"localReferencePackets"`
 	IndependentSharedPackets  int `json:"independentSharedPackets"`
 	SharedObserverOnlyPackets int `json:"sharedObserverOnlyPackets"`
+	SharedFeedIdentityPackets int `json:"sharedFeedIdentityPackets"`
 	NotSeenLocallyPackets     int `json:"notSeenLocallyPackets"`
 	DuplicateObserverIDs      int `json:"duplicateObserverIds"`
 	IdentityUnverifiedPackets int `json:"identityUnverifiedPackets"`
@@ -234,10 +236,12 @@ type crossBorderSnapshot struct {
 	Observations              []crossBorderObservationRow
 	OldestStoredObservationAt *string
 	LatestStoredObservationAt *string
+	LatestAfterSnapshotAt     *string
 	ObservationsTruncated     bool
 	ObserversTruncated        bool
 	NodesTruncated            bool
 	SharedObserverIDs         []string
 	Regions                   []CrossBorderRegion
 	SharedIdentityComplete    bool
+	SharedIdentityChecked     bool
 }

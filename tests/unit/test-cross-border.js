@@ -52,6 +52,12 @@ test('incomplete observer identity checks produce a visible warning', () => {
   assert.match(qualityNotice({ enabled: true, status: 'ready', completeness: { complete: true }, summary: { identityUnverifiedPackets: 1 } }), /Observer identity check incomplete/);
   assert.strictEqual(qualityNotice({ enabled: true, status: 'ready', completeness: { complete: true }, summary: { identityUnverifiedPackets: 0 } }), '');
 });
+test('after-snapshot evidence is visible without declaring a clock fault', () => {
+  const notice = qualityNotice({ enabled: true, status: 'partial', completeness: { complete: false },
+    sources: { peer: { status: 'after_snapshot', latestAfterSnapshotAt: '2026-01-01T00:02:00Z' } } });
+  assert.match(notice, /after the snapshot cutoff/);
+  assert.doesNotMatch(notice, /clock (fault|skew|error)/i);
+});
 test('browser suite refuses a non-loopback server before opening a browser', () => {
   const result = spawnSync(process.execPath, [path.resolve(__dirname, '../e2e/test-cross-border-e2e.js')], {
     encoding: 'utf8', timeout: 15000, env: { ...process.env, BASE_URL: 'https://example.org', CROSS_BORDER_ARTIFACT_DIR: '' }

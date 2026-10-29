@@ -61,6 +61,7 @@
     if (data.status === 'partial' || complete.complete === false) notes.push('Partial comparison.');
     if (data.status === 'unavailable' || sourceRows.some(function (source) { return source.status === 'unavailable'; })) notes.push('One or more sources are unavailable.');
     if (sourceRows.some(function (source) { return source.status === 'stale'; })) notes.push('One or more sources contain stale evidence.');
+    if (sourceRows.some(function (source) { return source.latestAfterSnapshotAt != null; })) notes.push('Observations after the snapshot cutoff were excluded; refresh to compare current evidence.');
     if (complete.packetsTruncated === true || complete.peerRepeatersTruncated === true || sourceRows.some(function (source) {
       return source.observationsTruncated === true || source.observersTruncated === true || source.nodesTruncated === true;
     })) notes.push('Some evidence is omitted by sample limits.');
@@ -90,11 +91,12 @@
   function scopes(value) { return Array.isArray(value) ? list(value.map(scopeLabel)) : 'Unknown scope'; }
   function widths(value) { return array(value).length ? list(value) + ' bytes' : 'Unknown'; }
   function sourceAvailable(data, source) {
-    return ['available', 'stale', 'empty'].indexOf(data.sources && data.sources[source] && data.sources[source].status) >= 0;
+    return ['available', 'stale', 'empty', 'after_snapshot'].indexOf(data.sources && data.sources[source] && data.sources[source].status) >= 0;
   }
   function referenceAvailable(data) { return sourceAvailable(data, 'local'); }
   function overlapLabel(value) {
-    return ({ independent: 'Match · distinct observers', shared_observer_only: 'Match · same observer only',
+    return ({ independent: 'Match · distinct observers', shared_observer_only: 'Match · same observer present',
+      shared_feed_identity: 'Match · shared-feed identity',
       identity_unverified: 'Observer identity check incomplete', not_seen_locally: 'No reference match', local_unavailable: 'Reference unavailable' })[value] || 'Unknown';
   }
   function locationLabel(location) {
@@ -135,8 +137,8 @@
       '<div id="cb-results" hidden><p id="cb-quality-warning" class="cb-warning" role="status" hidden></p><dl class="cb-summary">' +
       '<div><dt>Peer packets</dt><dd id="cb-peer-count">Unknown</dd></div>' +
       '<div><dt>Matching Canadian packets</dt><dd id="cb-independent-count">Unknown</dd><small>Distinct observers · among peer packets</small></div>' +
-      '<div><dt>Same-observer matches</dt><dd id="cb-shared-count">Unknown</dd><small>Among peer packets</small></div>' +
-      '<div class="cb-reference"><dt>All Canadian matches</dt><dd id="cb-local-count">Unknown</dd><small>Among peer packets; includes same-observer matches</small></div></dl>' +
+      '<div><dt>Shared-identity matches</dt><dd id="cb-shared-count">Unknown</dd><small>Same observer or shared-feed identity · among peer packets</small></div>' +
+      '<div class="cb-reference"><dt>All Canadian matches</dt><dd id="cb-local-count">Unknown</dd><small>Among peer packets; includes shared-identity matches</small></div></dl>' +
       '<details id="cb-quality" class="cb-quality"><summary>Data quality and limits</summary><div class="cb-quality-body">' +
       '<p class="cb-note">Missing observations are not packet loss or evidence of misconfiguration. Matches use packet content; observers present in both feeds do not count as distinct observers.</p>' +
       '<p class="cb-note">Retained evidence dates do not prove continuous collection. Declared scopes are the latest reports; observed forwarding uses unambiguous flood last-hop evidence. Radio hardware and relay reports do not establish per-packet settings.</p>' +
@@ -222,7 +224,7 @@
   function sourceText(source, snapshot) {
     source = source || {};
     var status = ({ available: 'Available', stale: 'Stale retained data', empty: 'No observations', unavailable: 'Unavailable',
-      disabled: 'Disabled', selection_required: 'Select a region' })[source.status] || 'Status unknown';
+      after_snapshot: 'Only after-snapshot observations', disabled: 'Disabled', selection_required: 'Select a region' })[source.status] || 'Status unknown';
     return known(source.label) + ' · ' + status + '\nRegions: ' + (array(source.selectionIata).join(', ') || 'Not selected') +
       '\nLatest observation: ' + known(source.latestObservationAt) + ' · ' + ageAt(source.latestObservationAt, snapshot) + ' at snapshot';
   }
@@ -230,6 +232,7 @@
     source = source || {};
     var caps = ['observationsTruncated', 'observersTruncated', 'nodesTruncated'].filter(function (key) { return source[key] === true; });
     return known(source.label) + '\nRetained evidence from: ' + known(source.oldestStoredObservationAt) +
+      '\nLatest excluded after snapshot: ' + known(source.latestAfterSnapshotAt) +
       '\nRows read: ' + numberLabel(source.rowsRead) + ' · TX excluded: ' + numberLabel(source.excludedTxObservations) +
       ' · Invalid headers excluded: ' + numberLabel(source.excludedInvalidObservations) +
       ' · Unknown direction: ' + numberLabel(source.unknownDirectionObservations) +
@@ -302,7 +305,9 @@
     var peerAvailable = sourceAvailable(data, 'peer');
     text(el('cb-peer-count'), peerAvailable ? numberLabel(summary.peerPackets) : 'Unavailable');
     text(el('cb-independent-count'), available && peerAvailable ? numberLabel(summary.independentSharedPackets) : 'Unavailable');
-    text(el('cb-shared-count'), available && peerAvailable ? numberLabel(summary.sharedObserverOnlyPackets) : 'Unavailable');
+    text(el('cb-shared-count'), available && peerAvailable ? numberLabel(
+      summary.sharedObserverOnlyPackets == null || summary.sharedFeedIdentityPackets == null ? null :
+        Number(summary.sharedObserverOnlyPackets) + Number(summary.sharedFeedIdentityPackets)) : 'Unavailable');
     text(el('cb-local-count'), available ? numberLabel(summary.localReferencePackets) : 'Unavailable');
     text(el('cb-completeness'), 'Completeness: ' + (complete.complete === true ? 'Within reported caps' : complete.complete === false ? 'Partial' : 'Unknown') +
       ' · Observation cap: ' + numberLabel(limits.observationRows) + ' per source · Metadata cap: ' + numberLabel(limits.metadataRows) +

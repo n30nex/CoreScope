@@ -340,7 +340,7 @@ func TestCrossBorderSQLBoundedSelectedSourcesAndPeerCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	before.Close()
-	got, err := local.readCrossBorder(context.Background(), []string{"AAA"}, now.Add(-time.Hour), cfg, []string{"candidate"})
+	got, err := local.readCrossBorder(context.Background(), []string{"AAA"}, now.Add(-time.Hour), now, cfg, []string{"candidate"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func TestCrossBorderSQLBoundedSelectedSourcesAndPeerCandidates(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := local.readCrossBorder(ctx, []string{"AAA"}, now.Add(-time.Hour), cfg, nil); !errors.Is(err, context.Canceled) {
+	if _, err := local.readCrossBorder(ctx, []string{"AAA"}, now.Add(-time.Hour), now, cfg, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("SQL read ignored cancellation: %v", err)
 	}
 }
@@ -377,7 +377,7 @@ func TestCrossBorderSQLCapsAndNulls(t *testing.T) {
 	}
 	cfg := crossBorderTestConfig()
 	cfg.ObservationLimit, cfg.MetadataLimit = 2, 1
-	got, err := db.readCrossBorder(context.Background(), []string{"BBB"}, now.Add(-time.Hour), cfg, nil)
+	got, err := db.readCrossBorder(context.Background(), []string{"BBB"}, now.Add(-time.Hour), now, cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

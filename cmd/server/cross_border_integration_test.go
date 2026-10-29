@@ -52,7 +52,7 @@ func TestCrossBorderNativeQueryDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err = db.readCrossBorder(ctx, []string{"AAA"}, time.Now().Add(-time.Hour), crossBorderTestConfig(), nil)
+	_, err = db.readCrossBorder(ctx, []string{"AAA"}, time.Now().Add(-time.Hour), time.Now(), crossBorderTestConfig(), nil)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("query/pool deadline ignored: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestCrossBorderSQLPlanAndBoundedLargeWindow(t *testing.T) {
 	}
 	cfg := crossBorderTestConfig()
 	start := time.Now()
-	got, err := db.readCrossBorder(context.Background(), []string{"AAA"}, now.Add(-time.Hour), cfg, hashes)
+	got, err := db.readCrossBorder(context.Background(), []string{"AAA"}, now.Add(-time.Hour), now, cfg, hashes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestCrossBorderSQLPlanAndBoundedLargeWindow(t *testing.T) {
 		t.Fatalf("unrelated traffic consumed candidate window: rows=%d capped=%v", len(got.Observations), got.ObservationsTruncated)
 	}
 	t.Logf("local peer-candidate read: %d transmissions / %d observations, 20 hashes -> 40 rows in %s", count, count*2, time.Since(start))
-	query, args := db.crossBorderObservationQuery([]string{"AAA"}, now.Add(-time.Hour), cfg, hashes)
+	query, args := db.crossBorderObservationQuery([]string{"AAA"}, now.Add(-time.Hour), now, cfg, hashes)
 	plan := []string{}
 	if db.Backend() == dbconfig.Postgres {
 		rows, err := db.conn.Query(`EXPLAIN (ANALYZE,BUFFERS,FORMAT TEXT) `+query, args...)
@@ -319,7 +319,7 @@ func TestCrossBorderOverlongScopeDoesNotInventTruncatedName(t *testing.T) {
 	crossBorderExec(t, db, `INSERT INTO observers(rowid,id,iata) VALUES(1,'peer','BBB')`)
 	crossBorderExec(t, db, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,scope_name) VALUES(1,'scoped','140102000040ff',0,5,$1)`, strings.Repeat("a", 129))
 	crossBorderExec(t, db, `INSERT INTO observations(transmission_id,observer_idx,timestamp,direction,raw_hex) VALUES(1,1,$1,'rx','140102000040ff')`, now)
-	snapshot, err := db.readCrossBorder(context.Background(), []string{"BBB"}, time.Now().Add(-time.Hour), crossBorderTestConfig(), nil)
+	snapshot, err := db.readCrossBorder(context.Background(), []string{"BBB"}, time.Now().Add(-time.Hour), time.Now(), crossBorderTestConfig(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,14 +354,14 @@ func TestCrossBorderRegionOptionsSurviveNarrowSelection(t *testing.T) {
 	crossBorderExec(t, db, `INSERT INTO observers(rowid,id,iata) VALUES(1,'one','AAA'),(2,'two','CCC'),(3,'three','DDD')`)
 	cfg := crossBorderTestConfig()
 	cfg.AllowedLocalIATA = []string{"AAA", "CCC"}
-	local, err := db.readCrossBorder(context.Background(), []string{"AAA"}, time.Now().Add(-time.Hour), cfg, []string{})
+	local, err := db.readCrossBorder(context.Background(), []string{"AAA"}, time.Now().Add(-time.Hour), time.Now(), cfg, []string{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(local.Observers) != 1 || len(local.Regions) != 2 || local.Regions[1].IATA != "CCC" {
 		t.Fatalf("local options narrowed to selected metadata or escaped allowlist: %+v", local.Regions)
 	}
-	peer, err := db.readCrossBorder(context.Background(), []string{"AAA"}, time.Now().Add(-time.Hour), cfg, nil)
+	peer, err := db.readCrossBorder(context.Background(), []string{"AAA"}, time.Now().Add(-time.Hour), time.Now(), cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestCrossBorderNativeDeclaredScopeReportsStayDatedAndPartial(t *testing.T) 
 	crossBorderExec(t, db, `CREATE TABLE node_declared_regions(target TEXT,observed_at TEXT,regions_csv TEXT,truncated INTEGER)`)
 	crossBorderExec(t, db, `INSERT INTO node_declared_regions(target,observed_at,regions_csv,truncated) VALUES($1,$2,'obsolete',0),($3,$4,'#new,*',1)`, first, oldAt, strings.ToUpper(first), newAt)
 	db.hasDeclaredRegionsTable = true
-	peer, err := db.readCrossBorder(context.Background(), []string{"BBB"}, time.Now().Add(-time.Hour), crossBorderTestConfig(), nil)
+	peer, err := db.readCrossBorder(context.Background(), []string{"BBB"}, time.Now().Add(-time.Hour), time.Now(), crossBorderTestConfig(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

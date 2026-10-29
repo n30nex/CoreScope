@@ -166,6 +166,8 @@ type crossBorderPacketAgg struct {
 	value                             CrossBorderPacket
 	peerIndependent, localIndependent bool
 	identityUnknown                   bool
+	peerObserverIDs                   map[string]bool
+	sameObserver                      bool
 }
 
 func crossBorderRegions(snapshot crossBorderSnapshot, allowed []string) []CrossBorderRegion {
@@ -225,9 +227,9 @@ func buildCrossBorder(ctx context.Context, cfg CrossBorderConfig, filters CrossB
 	if len(shared) > 0 {
 		r.Findings = append(r.Findings, CrossBorderFinding{Code: "shared_observers", Severity: "warning", Message: "Observers present in both sources are excluded from independent overlap."})
 	}
-	identitiesComplete := local.SharedIdentityComplete || (!local.ObserversTruncated && !peer.ObserversTruncated)
+	identitiesComplete := local.SharedIdentityComplete || (!local.SharedIdentityChecked && !local.ObserversTruncated && !peer.ObserversTruncated)
 	if !identitiesComplete {
-		r.Findings = append(r.Findings, CrossBorderFinding{Code: "identity_sample_incomplete", Severity: "warning", Message: "Observer metadata is capped; independent overlap cannot be established for this sample."})
+		r.Findings = append(r.Findings, CrossBorderFinding{Code: "identity_sample_incomplete", Severity: "warning", Message: "Full observer identity checks are incomplete; independent overlap cannot be established for this sample."})
 	}
 	observerAgg := map[string]*crossBorderObserverAgg{}
 	for _, o := range peer.Observers {
@@ -293,15 +295,26 @@ func buildCrossBorder(ctx context.Context, cfg CrossBorderConfig, filters CrossB
 		source.ObserversTruncated = snapshot.ObserversTruncated
 		source.NodesTruncated = snapshot.NodesTruncated
 		source.OldestStoredObservationAt = snapshot.OldestStoredObservationAt
+		source.LatestAfterSnapshotAt = snapshot.LatestAfterSnapshotAt
 		source.RowsRead = len(snapshot.Observations)
 		if !snapshot.Available {
 			continue
 		}
 		source.Status = "empty"
 		var newest int64
+		recordAfterSnapshot := func(ts int64) {
+			value := crossBorderTime(ts)
+			if source.LatestAfterSnapshotAt == nil || value > *source.LatestAfterSnapshotAt {
+				source.LatestAfterSnapshotAt = &value
+			}
+		}
 		if snapshot.LatestStoredObservationAt != nil {
 			if latest, err := time.Parse(time.RFC3339, *snapshot.LatestStoredObservationAt); err == nil {
-				newest = latest.Unix()
+				if latest.Unix() > now.Unix() {
+					recordAfterSnapshot(latest.Unix())
+				} else {
+					newest = latest.Unix()
+				}
 			}
 		}
 		for i, row := range snapshot.Observations {
@@ -310,10 +323,14 @@ func buildCrossBorder(ctx context.Context, cfg CrossBorderConfig, filters CrossB
 					return CrossBorderResponse{}, err
 				}
 			}
+			if row.Timestamp > now.Unix() {
+				recordAfterSnapshot(row.Timestamp)
+				continue
+			}
 			if row.Timestamp > newest {
 				newest = row.Timestamp
 			}
-			if row.Timestamp < since || row.Timestamp > now.Unix() {
+			if row.Timestamp < since {
 				continue
 			}
 			direction := strings.ToLower(strings.TrimSpace(row.Direction))
@@ -352,13 +369,18 @@ func buildCrossBorder(ctx context.Context, cfg CrossBorderConfig, filters CrossB
 				continue
 			}
 			if a == nil {
-				a = &crossBorderPacketAgg{value: CrossBorderPacket{Hash: row.Hash, PayloadType: wire.payload, RouteType: &wire.route, Scope: wire.scope, LastSeenAt: obs.ObservedAt, PeerObservations: []CrossBorderObservation{}, LocalObservations: []CrossBorderObservation{}}}
+				a = &crossBorderPacketAgg{value: CrossBorderPacket{Hash: row.Hash, PayloadType: wire.payload, RouteType: &wire.route, Scope: wire.scope, LastSeenAt: obs.ObservedAt, PeerObservations: []CrossBorderObservation{}, LocalObservations: []CrossBorderObservation{}}, peerObserverIDs: map[string]bool{}}
 				packets[row.Hash] = a
 			}
 			if id == "" {
 				a.identityUnknown = true
 			}
 			if side == 0 {
+				// Total identity entries are bounded by the observation sample,
+				// independent of the smaller per-packet display-detail cap.
+				if id != "" {
+					a.peerObserverIDs[id] = true
+				}
 				a.value.PeerObservationCount++
 				a.peerIndependent = a.peerIndependent || (id != "" && !shared[id] && identitiesComplete)
 				if obs.ObservedAt > a.value.LastSeenAt {
@@ -405,6 +427,7 @@ func buildCrossBorder(ctx context.Context, cfg CrossBorderConfig, filters CrossB
 					}
 				}
 			} else {
+				a.sameObserver = a.sameObserver || a.peerObserverIDs[id]
 				a.value.LocalObservationCount++
 				a.localIndependent = a.localIndependent || (id != "" && !shared[id] && identitiesComplete)
 				if len(a.value.LocalObservations) < cfg.ObservationsPerPacket {
@@ -418,14 +441,14 @@ func buildCrossBorder(ctx context.Context, cfg CrossBorderConfig, filters CrossB
 			ts := crossBorderTime(newest)
 			source.LatestObservationAt = &ts
 			age := now.Sub(time.Unix(newest, 0)).Seconds()
-			if age < 0 {
-				age = 0
-			}
 			source.AgeSeconds = &age
 			source.Status = "available"
 			if age > float64(cfg.StaleAfterSeconds) {
 				source.Status = "stale"
 			}
+		}
+		if source.LatestAfterSnapshotAt != nil && newest == 0 {
+			source.Status = "after_snapshot"
 		}
 	}
 	r.Summary.PeerPackets = len(packets)
@@ -443,9 +466,12 @@ func buildCrossBorder(ctx context.Context, cfg CrossBorderConfig, filters CrossB
 		case !identitiesComplete || a.identityUnknown:
 			p.Overlap = "identity_unverified"
 			r.Summary.IdentityUnverifiedPackets++
-		default:
+		case a.sameObserver:
 			p.Overlap = "shared_observer_only"
 			r.Summary.SharedObserverOnlyPackets++
+		default:
+			p.Overlap = "shared_feed_identity"
+			r.Summary.SharedFeedIdentityPackets++
 		}
 		if p.LocalObservationCount > 0 {
 			r.Summary.LocalReferencePackets++
@@ -492,6 +518,13 @@ func buildCrossBorder(ctx context.Context, cfg CrossBorderConfig, filters CrossB
 		r.Options.Scopes = append(r.Options.Scopes, CrossBorderScopeOption{Value: name, Label: name})
 	}
 	r.Completeness.Complete = local.Available && peer.Available && !local.ObservationsTruncated && !peer.ObservationsTruncated && !local.ObserversTruncated && !peer.ObserversTruncated && !peer.NodesTruncated && !r.Completeness.PacketsTruncated && r.Sources.Peer.ExcludedInvalidObservations == 0 && r.Sources.Local.ExcludedInvalidObservations == 0
+	if r.Sources.Peer.LatestAfterSnapshotAt != nil || r.Sources.Local.LatestAfterSnapshotAt != nil {
+		r.Completeness.Complete = false
+		r.Findings = append(r.Findings, CrossBorderFinding{Code: "after_snapshot_observations", Severity: "warning", Message: "Observations timestamped after this report's cutoff were excluded. They may reflect concurrent ingestion or clock disagreement; refresh before comparing freshness."})
+	}
+	if !identitiesComplete {
+		r.Completeness.Complete = false
+	}
 	for _, p := range r.Packets {
 		if p.ObservationsTruncated {
 			r.Completeness.Complete = false

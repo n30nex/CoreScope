@@ -8,6 +8,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
+const waitForPending = require('./cross-border-wait');
 const ROOT = path.resolve(__dirname, '../..');
 const PUBLIC = path.join(ROOT, 'public');
 const SAMPLE = JSON.parse(fs.readFileSync(path.join(ROOT, 'test-fixtures/cross-border.json'), 'utf8'));
@@ -75,7 +76,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
         data.summary.peerPackets = data.packets.length;
         if (mode === 'empty' || mode === 'disabled' || mode === 'unavailable') {
           data.packets = []; data.peerObservers = []; data.peerRepeaters = [];
-          data.summary = { peerPackets: 0, localReferencePackets: 0, independentSharedPackets: 0, sharedObserverOnlyPackets: 0 };
+          data.summary = { peerPackets: 0, localReferencePackets: 0, independentSharedPackets: 0, sharedObserverOnlyPackets: 0, sharedFeedIdentityPackets: 0 };
           data.sources.peer.status = data.sources.local.status = mode === 'empty' ? 'empty' : mode;
           data.sources.peer.latestObservationAt = data.sources.local.latestObservationAt = null;
           data.status = mode === 'empty' ? 'ready' : mode;
@@ -96,6 +97,18 @@ const clone = value => JSON.parse(JSON.stringify(value));
           data.packets[0].overlap = 'identity_unverified';
           data.summary.identityUnverifiedPackets = 1;
           data.summary.independentSharedPackets = 0;
+        }
+        if (mode === 'shared-feed-identity') {
+          data.packets[0].overlap = 'shared_feed_identity';
+          data.summary.independentSharedPackets = 0;
+          data.summary.sharedObserverOnlyPackets = 0;
+          data.summary.sharedFeedIdentityPackets = 1;
+        }
+        if (mode === 'after-snapshot') {
+          data.status = 'partial'; data.completeness.complete = false;
+          data.sources.peer.status = 'after_snapshot';
+          data.sources.peer.latestObservationAt = null; data.sources.peer.ageSeconds = null;
+          data.sources.peer.latestAfterSnapshotAt = '2026-10-28T20:01:00Z';
         }
         if (mode === 'caps') {
           data.completeness = { complete: false, packetsTruncated: true, peerRepeatersTruncated: true };
@@ -169,11 +182,11 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.match(await page.locator('#cb-observers').innerText(), /Reported: Unknown/);
       assert.strictEqual(await page.locator('.cb-page img').count(), 0);
       assert.match(await page.locator('#cb-packets').innerText(), /Match · distinct observers/);
-      assert.match(await page.locator('#cb-packets').innerText(), /Match · same observer only/);
+      assert.match(await page.locator('#cb-packets').innerText(), /Match · same observer present/);
       assert.strictEqual(await page.locator('#cb-local-count').innerText(), '2');
       const localMatchCard = await page.locator('#cb-local-count').locator('..').innerText();
       assert.match(localMatchCard, /All Canadian matches/);
-      assert.match(localMatchCard, /Among peer packets; includes same-observer matches/);
+      assert.match(localMatchCard, /Among peer packets; includes shared-identity matches/);
       assert.doesNotMatch(localMatchCard, /Reference feed total|Canadian reference packets/);
       assert.strictEqual(await page.locator('#cb-peer-profile a').getAttribute('href'), 'https://example.org/radio-profile');
       assert.match(await page.locator('#cb-peer-profile').textContent(), /not device measurements/);
@@ -259,7 +272,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       heldWindow = 15;
       await apply({ window: 15, scope: 'all' });
       await page.waitForFunction(() => document.querySelector('#cb-results').hasAttribute('aria-busy'));
-      while (!pending.length) await new Promise(resolve => setTimeout(resolve, 10));
+      await waitForPending(() => pending.length > 0);
       await apply({ window: 360 }); await ready();
       assert(await page.evaluate(() => window.__borderSignals.at(-2).aborted));
       await releasePending(); heldWindow = null;
@@ -294,7 +307,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       mode = 'identity-unverified'; await page.click('#cb-refresh'); await ready();
       const row = page.locator('#cb-packets tr').first();
       assert.match(await row.innerText(), /Observer identity check incomplete/);
-      assert.doesNotMatch(await row.innerText(), /Match · distinct observers|Match · same observer only/);
+      assert.doesNotMatch(await row.innerText(), /Match · distinct observers|Match · same observer present/);
       assert.strictEqual(await page.locator('#cb-independent-count').innerText(), '0');
       assert(await page.locator('#cb-quality-warning').isVisible());
       assert.match(await page.locator('#cb-quality-warning').innerText(), /Observer identity check incomplete/);
@@ -312,13 +325,28 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert(await page.locator('#cb-quality-warning').isVisible());
       assert.match(await page.locator('#cb-observer-count').innerText(), /200 of 205/);
     });
+    await check('shared-feed identities do not claim the same observer reported the packet', async () => {
+      mode = 'shared-feed-identity'; await page.click('#cb-refresh'); await ready();
+      const row = page.locator('#cb-packets tr').first();
+      assert.match(await row.innerText(), /Match · shared-feed identity/);
+      assert.doesNotMatch(await row.innerText(), /Match · same observer present|Match · distinct observers/);
+      assert.strictEqual(await page.locator('#cb-shared-count').innerText(), '1');
+      assert.match(await page.locator('.cb-summary').innerText(), /Shared-identity matches/);
+    });
+    await check('after-snapshot observations show a neutral quality warning and unknown freshness', async () => {
+      mode = 'after-snapshot'; await page.click('#cb-refresh'); await ready();
+      assert.match(await page.locator('#cb-quality-warning').innerText(), /after the snapshot cutoff/);
+      assert.match(await page.locator('#cb-peer-source').innerText(), /Only after-snapshot observations.*\n.*\nLatest observation: Unknown · Age unknown/);
+      assert.doesNotMatch(await page.locator('#cb-quality-warning').innerText(), /clock (fault|skew|error)/i);
+      mode = 'normal';
+    });
     await check('disabled feature remains navigable and late responses do not overwrite route exit', async () => {
       mode = 'disabled'; await page.click('#cb-refresh'); await ready();
       assert(await page.locator('#cb-results').isHidden());
       assert.match(await page.locator('#cb-status').innerText(), /disabled/);
       mode = 'normal'; heldWindow = 15;
       await apply({ window: 15 });
-      while (!pending.length) await new Promise(resolve => setTimeout(resolve, 10));
+      await waitForPending(() => pending.length > 0);
       await page.locator('.cb-page > header a').click();
       await page.waitForSelector('.tools-landing');
       assert(await page.evaluate(() => window.__borderSignals.at(-1).aborted));

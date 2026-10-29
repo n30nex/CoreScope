@@ -191,7 +191,7 @@ func (db *DB) crossBorderObserverJoin() string {
 	return "JOIN observers ob ON ob.id=o.observer_id"
 }
 
-func (db *DB) readCrossBorder(ctx context.Context, iatas []string, since time.Time, cfg CrossBorderConfig, hashes []string) (crossBorderSnapshot, error) {
+func (db *DB) readCrossBorder(ctx context.Context, iatas []string, since, until time.Time, cfg CrossBorderConfig, hashes []string) (crossBorderSnapshot, error) {
 	snapshot := crossBorderSnapshot{Observers: []CrossBorderObserver{}, Nodes: []crossBorderNode{}, Observations: []crossBorderObservationRow{}, Regions: []CrossBorderRegion{}}
 	if err := ctx.Err(); err != nil {
 		return snapshot, err
@@ -284,8 +284,10 @@ func (db *DB) readCrossBorder(ctx context.Context, iatas []string, since time.Ti
 	rows.Close()
 	args = []any{}
 	where = crossBorderIn(db, "UPPER(TRIM(COALESCE(ob.iata,'')))", iatas, &args)
+	args = append(args, until.Unix())
+	timeBound := "o.timestamp <= " + db.parameter(len(args))
 	var oldest sql.NullInt64
-	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` ORDER BY o.timestamp ASC LIMIT 1`, args...).Scan(&oldest)
+	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND `+timeBound+` ORDER BY o.timestamp ASC LIMIT 1`, args...).Scan(&oldest)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return snapshot, err
 	}
@@ -296,7 +298,7 @@ func (db *DB) readCrossBorder(ctx context.Context, iatas []string, since time.Ti
 	// Source freshness is selected-feed activity, independent of matching peer
 	// hashes. Zero overlap must not make a fresh reference look disconnected.
 	var latest sql.NullInt64
-	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` ORDER BY o.timestamp DESC LIMIT 1`, args...).Scan(&latest)
+	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND `+timeBound+` ORDER BY o.timestamp DESC LIMIT 1`, args...).Scan(&latest)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return snapshot, err
 	}
@@ -304,8 +306,19 @@ func (db *DB) readCrossBorder(ctx context.Context, iatas []string, since time.Ti
 		s := crossBorderTime(latest.Int64)
 		snapshot.LatestStoredObservationAt = &s
 	}
+	// A row after the report cutoff may be concurrent ingestion, or a clock
+	// disagreement. Keep it explicit without treating it as zero-age evidence.
+	var after sql.NullInt64
+	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND o.timestamp > `+db.parameter(len(args))+` ORDER BY o.timestamp DESC LIMIT 1`, args...).Scan(&after)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return snapshot, err
+	}
+	if after.Valid {
+		s := crossBorderTime(after.Int64)
+		snapshot.LatestAfterSnapshotAt = &s
+	}
 	if hashes == nil || len(hashes) > 0 {
-		query, args := db.crossBorderObservationQuery(iatas, since, cfg, hashes)
+		query, args := db.crossBorderObservationQuery(iatas, since, until, cfg, hashes)
 		// Candidate counts vary between reports. Reuse the existing uncached
 		// pgx execution mode instead of filling the main pool's statement cache
 		// with many large IN-list shapes. SQLite receives ordinary arguments.
@@ -349,9 +362,9 @@ func (db *DB) readCrossBorder(ctx context.Context, iatas []string, since time.Ti
 // restricted to capped peer hash candidates, so unrelated local traffic cannot
 // displace matching reference evidence. ORDER BY uses the observation-time
 // index; hash/transmission and observer joins use their existing keys.
-func (db *DB) crossBorderObservationQuery(iatas []string, since time.Time, cfg CrossBorderConfig, hashes []string) (string, []any) {
-	args := []any{since.Unix()}
-	where := []string{"o.timestamp >= " + db.parameter(1), crossBorderIn(db, "UPPER(TRIM(COALESCE(ob.iata,'')))", iatas, &args)}
+func (db *DB) crossBorderObservationQuery(iatas []string, since, until time.Time, cfg CrossBorderConfig, hashes []string) (string, []any) {
+	args := []any{since.Unix(), until.Unix()}
+	where := []string{"o.timestamp >= " + db.parameter(1), "o.timestamp <= " + db.parameter(2), crossBorderIn(db, "UPPER(TRIM(COALESCE(ob.iata,'')))", iatas, &args)}
 	if hashes != nil {
 		where = append(where, crossBorderIn(db, "t.hash", hashes, &args))
 	}
@@ -460,7 +473,7 @@ func (db *DB) readCrossBorderNodes(ctx context.Context, cfg CrossBorderConfig, s
 	return rows.Err()
 }
 
-func (db *DB) crossBorderSharedIDs(ctx context.Context, ids map[string]bool) ([]string, error) {
+func crossBorderIdentityKeys(ids map[string]bool) []string {
 	keys := make([]string, 0, len(ids))
 	for id := range ids {
 		if id != "" {
@@ -468,13 +481,66 @@ func (db *DB) crossBorderSharedIDs(ctx context.Context, ids map[string]bool) ([]
 		}
 	}
 	sort.Strings(keys)
+	return keys
+}
+
+func (db *DB) crossBorderIdentitySQL(column string) string {
+	// Match canonical full public keys while preserving opaque IDs verbatim.
+	return db.nativeSQL(`CASE WHEN length(`+column+`)=64 AND lower(`+column+`) NOT GLOB '*[^0-9a-f]*' THEN lower(`+column+`) ELSE `+column+` END`, `CASE WHEN `+column+` ~ '^[0-9a-fA-F]{64}$' THEN lower(`+column+`) ELSE `+column+` END`)
+}
+
+// The union returns at most one row per bounded candidate identity. Name
+// matching uses full DB names, not the display prefixes or metadata caps.
+func (db *DB) crossBorderHiddenIDs(ctx context.Context, ids map[string]bool, cfg *Config) (map[string]bool, error) {
+	hidden := map[string]bool{}
+	keys := crossBorderIdentityKeys(ids)
+	if len(keys) == 0 || cfg == nil {
+		return hidden, nil
+	}
+	cfg.IsNameHidden("") // Materialize the existing atomic prefix snapshot.
+	prefixes := cfg.hiddenPrefixesPtr.Load()
+	args := []any{}
+	observerID, nodeID := db.crossBorderIdentitySQL("id"), db.crossBorderIdentitySQL("public_key")
+	observerWhere := crossBorderIn(db, observerID, keys, &args)
+	// Both branches reuse the same bound candidate parameters.
+	nodeWhere := strings.Replace(observerWhere, observerID, nodeID, 1)
+	names := []string{}
+	for _, prefix := range *prefixes {
+		if prefix != "" {
+			args = append(args, prefix)
+			p := db.parameter(len(args))
+			names = append(names, "substr(COALESCE(name,''),1,length("+p+"))="+p)
+		}
+	}
+	if len(names) == 0 {
+		return hidden, nil
+	}
+	nameWhere := "(" + strings.Join(names, " OR ") + ")"
+	query := `SELECT ` + observerID + ` FROM observers WHERE ` + observerWhere + ` AND ` + nameWhere +
+		` UNION SELECT ` + nodeID + ` FROM nodes WHERE ` + nodeWhere + ` AND ` + nameWhere
+	rows, err := db.conn.QueryContext(ctx, query, db.planWithValues(args)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		hidden[id] = true
+	}
+	return hidden, rows.Err()
+}
+
+func (db *DB) crossBorderSharedIDs(ctx context.Context, ids map[string]bool) ([]string, error) {
+	keys := crossBorderIdentityKeys(ids)
 	out := []string{}
 	if len(keys) == 0 {
 		return out, nil
 	}
 	args := []any{}
-	// Match canonical full public keys while preserving opaque IDs verbatim.
-	identity := db.nativeSQL(`CASE WHEN length(id)=64 AND lower(id) NOT GLOB '*[^0-9a-f]*' THEN lower(id) ELSE id END`, `CASE WHEN id ~ '^[0-9a-fA-F]{64}$' THEN lower(id) ELSE id END`)
+	identity := db.crossBorderIdentitySQL("id")
 	where := crossBorderIn(db, identity, keys, &args)
 	rows, err := db.conn.QueryContext(ctx, `SELECT DISTINCT `+identity+` FROM observers WHERE `+where+` LIMIT `+fmt.Sprint(len(keys)), args...)
 	if err != nil {
