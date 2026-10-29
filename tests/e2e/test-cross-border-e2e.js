@@ -165,12 +165,13 @@ const clone = value => JSON.parse(JSON.stringify(value));
     page.on('pageerror', error => errors.push(error.message));
     const ready = () => page.waitForFunction(() => { const el = document.querySelector('#cb-results'); return el && !el.hasAttribute('aria-busy'); });
     async function apply(values) {
-      if (values.window != null) await page.selectOption('#cb-window', String(values.window));
       if (values.scope != null) await page.selectOption('#cb-scope', values.scope);
       if (values.peer != null) await page.fill('#cb-peer', values.peer);
       if (values.local != null) await page.fill('#cb-local', values.local);
-      await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
+      if (values.window != null) await page.locator('#cb-window-pills button[data-window="' + values.window + '"]').click();
+      else await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
     }
+    async function tab(name) { await page.getByRole('tab', { name: name, exact: true }).click(); }
     async function releasePending() {
       const items = pending; pending = [];
       for (const item of items) { await item.route.fulfill({ json: item.data }); item.resolve(); }
@@ -228,6 +229,29 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.strictEqual(await page.locator('#cb-peer-profile a').getAttribute('href'), 'https://example.org/radio-profile');
       assert.match(await page.locator('#cb-peer-profile').textContent(), /not device measurements/);
     });
+    await check('analytics category tabs reuse data, support keyboard history and resize charts', async () => {
+      assert.strictEqual(await page.getByRole('tablist', {name:'Cross-border analytics'}).count(), 1);
+      assert.strictEqual(await page.getByRole('tab').count(), 5);
+      assert.strictEqual(await page.locator('.cb-overview-metrics .stat-card').count(), 4);
+      const before = calls.length;
+      await page.getByRole('tab', {name:'Hash widths', exact:true}).click();
+      assert.match(page.url(), /tab=hash-widths/);
+      assert.strictEqual(await page.locator('#cb-analytics-tabs .active').count(), 1);
+      assert(await page.locator('#cb-adoption-title').isVisible());
+      await page.waitForFunction(() => Chart.getChart('cb-advert-chart').width > 100);
+      await page.keyboard.press('ArrowRight');
+      assert.strictEqual(await page.getByRole('tab', {name:'Scopes & regions', exact:true}).getAttribute('aria-selected'), 'true');
+      assert(await page.locator('#cb-region-grid').isVisible());
+      await page.goBack();
+      await page.waitForFunction(() => document.querySelector('#cb-tab-hash-widths').getAttribute('aria-selected') === 'true');
+      assert(await page.locator('#cb-adoption-title').isVisible());
+      await page.goForward();
+      await page.waitForFunction(() => document.querySelector('#cb-tab-scopes-regions').getAttribute('aria-selected') === 'true');
+      assert.strictEqual(calls.length, before, 'display categories and history must reuse the loaded response');
+      await page.getByRole('tab', {name:'Overview', exact:true}).click();
+      assert.match(await page.locator('#cb-intro').innerText(), /where traffic was heard.*same repeater can appear in both feeds/i);
+      assert(await page.locator('#cb-activity-chart').isVisible());
+    });
     await check('plain-language overview keeps technical details in a keyboard-accessible shareable disclosure', async () => {
       assert.match(await page.locator('#cb-intro').innerText(), /path widths, scopes and radio airtime/);
       assert.match(await page.locator('.cb-summary').innerText(), /Matching Canadian packets[\s\S]*Distinct observers · among peer packets/);
@@ -284,10 +308,13 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.strictEqual(await page.locator('#cb-packets tr').count(), 1);
       assert.strictEqual(calls.at(-1).get('peerIata'), 'CCC');
       assert.strictEqual(calls.at(-1).get('windowMinutes'), '180');
+      const beforeBack = calls.length;
       await page.goBack(); await ready();
+      assert.strictEqual(calls.length, beforeBack + 1, 'changed data filters must fetch their own snapshot');
       assert.strictEqual(await page.inputValue('#cb-peer'), 'BBB');
       assert.strictEqual(await page.inputValue('#cb-window'), '60');
       await page.goForward(); await ready();
+      assert.strictEqual(calls.length, beforeBack + 2, 'restored data filters must not be treated as display-only history');
       assert.strictEqual(await page.inputValue('#cb-peer'), 'CCC');
       assert.strictEqual(await page.inputValue('#cb-window'), '180');
     });
@@ -398,26 +425,34 @@ const clone = value => JSON.parse(JSON.stringify(value));
     });
     await check('charts show separate adoption denominators, gaps and distinct scope categories', async () => {
       mode = 'normal'; await page.click('#cb-refresh'); await ready();
+      await tab('Hash widths');
       assert.deepStrictEqual(await page.evaluate(() => Chart.getChart('cb-advert-chart').data.datasets.map(ds => ds.data)), [[20,70],[70,20],[10,10]]);
       assert.deepStrictEqual(await page.evaluate(() => Chart.getChart('cb-width-chart').data.datasets.map(ds => ds.data)), [[20,70],[65,20],[15,10]]);
       assert(await page.evaluate(() => Chart.getChart('cb-local-trend').data.datasets.every(ds => ds.data[0] === null && ds.spanGaps === false)));
+      await tab('Scopes & regions');
       assert.match(await page.locator('#cb-scope-values').innerText(), /Transport wildcard/);
+      await tab('Radio load');
       assert.match(await page.locator('#cb-radio-values').innerText(), /4 reporting radios/);
       assert.match(await page.locator('#cb-radio-values').innerText(), /Latest available report: (?!Unknown)/);
       assert.deepStrictEqual(await page.evaluate(() => {
         const footer = Chart.getChart('cb-local-trend').options.plugins.tooltip.callbacks.footer;
         return [footer([{dataIndex:1}]), footer([{dataIndex:0}])];
       }), ['Qualifying flood records: 100', 'Qualifying flood records: Unknown']);
+      await tab('Hash widths');
       const trendMethod = page.getByText('Time-series values and method', { exact: true });
       await trendMethod.click();
       assert(await page.locator('#cb-trend-values').isVisible());
       const trendValues = await page.locator('#cb-trend-values tr').nth(1).locator('td').allTextContents();
-      assert.strictEqual(trendValues[0], 'Canada');
+      assert.strictEqual(trendValues[0], 'Canadian listeners');
       assert.deepStrictEqual(trendValues.slice(2), ['100', '47%', '33%', '20%']);
       assert.strictEqual(await page.locator('#cb-trend-values tr').first().locator('td').nth(2).innerText(), 'Unknown');
       await trendMethod.click();
-      assert.strictEqual(await page.locator('#cb-dashboard canvas').count(), 6);
-      assert(await page.locator('#cb-dashboard canvas').evaluateAll(nodes => nodes.every(canvas => canvas.width > 100 && canvas.height > 100)));
+      assert.strictEqual(await page.locator('#cb-dashboard canvas').count(), 11);
+      for (const [view, ids] of [['Overview',['cb-activity-chart','cb-local-donut','cb-peer-donut']], ['Hash widths',['cb-advert-chart','cb-width-chart','cb-local-trend','cb-peer-trend']], ['Scopes & regions',['cb-scope-chart']], ['Radio load',['cb-radio-chart']]]) {
+        await tab(view);
+        await page.waitForFunction(chartIds => chartIds.every(id => { const chart = Chart.getChart(id); return chart.width > 100 && chart.height > 100; }), ids);
+      }
+      await tab('Hash widths');
       await page.evaluate(() => { window.__keptBorderChart = Chart.getChart('cb-advert-chart'); });
       await page.click('#cb-refresh'); await ready();
       assert(await page.evaluate(() => window.__keptBorderChart === Chart.getChart('cb-advert-chart')), 'refresh must update charts in place');
@@ -427,6 +462,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       mode = 'normal';
     });
     await check('repeater matrix searches and drill-downs without another request', async () => {
+      await tab('Repeaters');
       const before = calls.length;
       await page.fill('#cb-repeater-search', 'Canadian test repeater 1');
       assert.strictEqual(await page.locator('#cb-carry-rows tr').count(), 1);
@@ -442,6 +478,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.strictEqual(await page.locator('#cb-carry-rows tr').count(), 8);
     });
     await check('region matrix selects a comparison and preserves unknown identity states', async () => {
+      await tab('Scopes & regions');
       await apply({local:'AAA,AAD', peer:'BBB,CCC'}); await ready();
       await page.evaluate(() => { window.__keptRegionButton = document.querySelector('#cb-region-grid button'); });
       await page.click('#cb-refresh'); await ready();
@@ -511,22 +548,34 @@ const clone = value => JSON.parse(JSON.stringify(value));
         'Border links belongs under Tools, so the mobile More tab must remain active');
       await page.focus('#cb-peer'); await page.keyboard.press('Tab');
       assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'cb-local');
-      await page.selectOption('#cb-window', '180');
-      await page.getByRole('button', { name: 'Apply filters', exact: true }).focus(); await page.keyboard.press('Enter'); await ready();
+      await page.locator('#cb-window-pills button[data-window="180"]').focus(); await page.keyboard.press('Enter'); await ready();
       assert.match(page.url(), /windowMinutes=180/);
       if (process.env.CROSS_BORDER_ARTIFACT_DIR) {
         fs.mkdirSync(process.env.CROSS_BORDER_ARTIFACT_DIR, { recursive: true });
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-mobile.png'), fullPage: true });
+        await tab('Hash widths');
         await page.locator('#cb-adoption-title').scrollIntoViewIfNeeded();
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-mobile-adoption.png') });
+        await tab('Repeaters');
         await page.locator('#cb-carry-title').scrollIntoViewIfNeeded();
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-mobile-repeaters.png') });
         await page.setViewportSize({ width: 1440, height: 1050 });
+        await tab('Overview');
         await page.reload(); await ready();
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-desktop.png'), fullPage: true });
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-desktop-top.png') });
         await page.evaluate(() => { document.documentElement.setAttribute('data-theme', 'dark'); window.dispatchEvent(new Event('theme-changed')); });
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-dark.png'), fullPage: true });
+        await tab('Hash widths');
+        assert.strictEqual(await page.locator('#cb-analytics-tabs .active').count(), 1);
+        assert.strictEqual(await page.locator('#cb-analytics-tabs [aria-selected="true"]').count(), 1);
+        assert(await page.locator('#cb-analytics-tabs').evaluate(node => {
+          const selected = node.querySelector('[aria-selected="true"]');
+          const selectedColor = getComputedStyle(selected).backgroundColor;
+          const cardColor = getComputedStyle(document.querySelector('.analytics-card')).backgroundColor;
+          return Array.from(node.querySelectorAll('[aria-selected="false"]')).every(button => getComputedStyle(button).backgroundColor === cardColor && getComputedStyle(button).backgroundColor !== selectedColor);
+        }), 'inactive dark tabs must use the card surface, not an active-looking fill');
+        await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-dark-hashes.png'), fullPage: true });
       }
     });
     assert.deepStrictEqual(errors, [], 'Browser must have no uncaught JavaScript errors');

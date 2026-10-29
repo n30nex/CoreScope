@@ -22,6 +22,22 @@ test('missing or invalid windows defer to the server while explicit valid window
   [undefined, null, '', 'bad', 9999].forEach(windowMinutes => assert.strictEqual(normalizeFilters({ windowMinutes }).windowMinutes, ''));
   [15, 60, 180, 360].forEach(windowMinutes => assert.strictEqual(normalizeFilters({ windowMinutes: String(windowMinutes) }).windowMinutes, windowMinutes));
 });
+test('analytics categories have bounded URL state without changing data filters', () => {
+  assert.strictEqual(normalizeFilters({tab:'hash-widths'}).tab, 'hash-widths');
+  assert.strictEqual(normalizeFilters({tab:'radio-load'}).tab, 'radio-load');
+  assert.strictEqual(normalizeFilters({tab:'not-a-category'}).tab, 'overview');
+  assert.strictEqual(typeof require('../../public/cross-border').dataKey, 'function');
+  const key = require('../../public/cross-border').dataKey;
+  assert.strictEqual(key(normalizeFilters({localIata:'AAA',peerIata:'BBB',windowMinutes:60,tab:'overview'})), key(normalizeFilters({localIata:'AAA',peerIata:'BBB',windowMinutes:60,tab:'repeaters',node:'peer:key'})));
+  assert.notStrictEqual(key(normalizeFilters({windowMinutes:60})), key(normalizeFilters({windowMinutes:180})));
+});
+test('record sparklines use the matching timeline metric and retain gaps and zero', () => {
+  assert.strictEqual(typeof dashboard.recordSeries, 'function');
+  const source = {status:'available',records:20,contents:999,timeline:[{at:'2026-01-01T00:00:00Z',complete:false,records:9},{at:'2026-01-01T00:05:00Z',complete:true,records:0,oneByte:12},{at:'2026-01-01T00:10:00Z',complete:true,records:11,oneByte:2}]};
+  assert.deepStrictEqual(dashboard.recordSeries(source).values, [null,0,11]);
+  source.status='unavailable';
+  assert.deepStrictEqual(dashboard.recordSeries(source).values, [null,null,null]);
+});
 test('unknown numbers never become zero and legitimate zero is retained', () => {
   [null, undefined, '', false, NaN, Infinity, 'bad'].forEach(value => assert.strictEqual(numberLabel(value), 'Unknown'));
   assert.strictEqual(numberLabel(0), '0');

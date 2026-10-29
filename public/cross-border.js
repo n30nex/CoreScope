@@ -6,6 +6,10 @@
   var METADATA_LIMIT = 200;
   var OBSERVATION_LIMIT = 8;
   var active = null;
+  var QUERY_FILTERS = ['localIata', 'peerIata', 'scope', 'windowMinutes'];
+  var dashboardAPI = typeof CrossBorderDashboard !== 'undefined' ? CrossBorderDashboard :
+    (typeof module !== 'undefined' && module.exports && typeof require === 'function' ? require('./cross-border-dashboard') : null);
+  function dataKey(filters) { return JSON.stringify(QUERY_FILTERS.map(function (key) { return filters[key]; })); }
 
   function normalizeFilters(input) {
     input = input || {};
@@ -23,6 +27,7 @@
     if (input.repeater) result.repeater = String(input.repeater).slice(0, 80);
     if (input.node) result.node = String(input.node).slice(0, 140);
     if (Number(input.repeaterPage) > 0) result.repeaterPage = String(Math.min(39, Math.floor(Number(input.repeaterPage))));
+    if (input.tab != null && dashboardAPI) result.tab = dashboardAPI.normalizeTab(String(input.tab));
     return result;
   }
 
@@ -90,7 +95,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { normalizeFilters, numberLabel, scopeLabel, ageAt, uniqueRows, qualityNotice };
+    module.exports = { normalizeFilters, dataKey, numberLabel, scopeLabel, ageAt, uniqueRows, qualityNotice };
   }
   if (typeof registerPage !== 'function') return;
 
@@ -137,8 +142,8 @@
       '</tr></thead><tbody id="' + id + '"></tbody></table></div>';
   }
   function pageHtml() {
-    return '<div class="cb-page">' +
-      '<header class="cb-header"><div><a href="#/tools">Tools</a><h1>Border links</h1>' +
+    return '<div class="cb-page analytics-page">' +
+      '<header class="cb-header analytics-header"><div><a href="#/tools">Tools</a><h1>Border links</h1>' +
       '<p id="cb-intro">Compare path widths, scopes and radio airtime across the border.</p></div>' +
       '<div class="cb-live-controls"><label><input type="checkbox" id="cb-live" checked> Live updates · every minute</label><button type="button" id="cb-refresh">Refresh</button></div></header>' +
       '<p id="cb-status" role="status" aria-live="polite">Loading peer telemetry…</p>' +
@@ -148,7 +153,8 @@
       '<label>Canadian regions<input id="cb-local" name="localIata" list="cb-local-options" placeholder="Operator default" maxlength="160" autocomplete="off"></label>' +
       '<datalist id="cb-local-options"></datalist>' +
       '<label>Scope<select id="cb-scope" name="scope"><option value="all">All scopes</option><option value="unscoped">Unscoped</option><option value="unknown">Unknown scope</option></select></label>' +
-      '<label>Window<select id="cb-window" name="windowMinutes"><option value="">Operator default</option></select></label><button type="submit">Apply filters</button>' +
+      '<label class="cb-window-select" hidden>Window<select id="cb-window" name="windowMinutes"><option value="">Operator default</option></select></label><button type="submit">Apply filters</button>' +
+      '<div id="cb-window-pills" class="analytics-time-range cb-window-pills" role="group" aria-label="Comparison time window"></div>' +
       '<p class="cb-filter-help">Choose region codes from the suggestions, separated by commas. Blank uses the default. Scope filters both overview samples; radio reports include all scopes.</p></form>' +
       '<div class="cb-sources"><section class="cb-source" aria-labelledby="cb-peer-title"><h2 id="cb-peer-title">US / peer listeners</h2><p id="cb-peer-source"></p></section>' +
       '<section class="cb-source cb-reference" aria-labelledby="cb-local-title"><h2 id="cb-local-title">Canadian listeners</h2><p id="cb-local-source"></p></section></div>' +
@@ -242,6 +248,19 @@
     state.el('cb-quality').open = state.filters.quality === '1';
     state.el('cb-evidence').open = state.filters.evidence === '1' || Boolean(state.filters.packet);
     state.el('cb-live').checked = state.filters.live !== '0';
+    windowPills(state);
+  }
+  function windowPills(state) {
+    var node = state.el('cb-window-pills'), selected = String(state.filters.windowMinutes);
+    var minutes = Array.from(state.el('cb-window').options).map(function (option) { return Number(option.value); }).filter(function (value) { return WINDOWS.indexOf(value) >= 0; });
+    var old = new Map(Array.from(node.children).map(function (button) { return [button.dataset.window, button]; }));
+    minutes.forEach(function (value, index) {
+      var key = String(value), button = old.get(key);
+      if (!button) { button = document.createElement('button'); button.type = 'button'; button.dataset.window = key; }
+      text(button, value < 60 ? value + 'm' : value / 60 + 'h'); button.setAttribute('aria-label', 'Last ' + windowLabel(value));
+      button.setAttribute('aria-pressed', String(key === selected)); button.classList.toggle('active', key === selected);
+      if (node.children[index] !== button) node.insertBefore(button, node.children[index] || null); old.delete(key);
+    }); old.forEach(function (button) { button.remove(); });
   }
   function sourceText(source, snapshot) {
     source = source || {};
@@ -316,7 +335,7 @@
     var updated = data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Unknown';
     var status = data.dashboard && data.enabled ? (qualityNotice(data) ? 'Partial comparison' : 'Comparison ready') : statuses[data.status] || 'Comparison status unknown';
     text(el('cb-status'), status + ' · Updated ' + updated);
-    text(el('cb-intro'), 'See how path widths, scopes and radio airtime compare between Canadian listeners and ' + (sources.peer && sources.peer.label || 'the peer feed') + '.');
+    text(el('cb-intro'), 'Compare path widths, scopes and radio airtime by where traffic was heard. The same repeater can appear in both feeds; own adverts show the width it originates, while carried widths can differ.');
     text(el('cb-peer-source'), sourceText(sources.peer, data.generatedAt));
     text(el('cb-local-source'), sourceText(sources.local, data.generatedAt));
     text(el('cb-peer-quality'), sourceQuality(sources.peer));
@@ -359,6 +378,7 @@
     });
     options(el('cb-window'), windows, 'value', 'label');
     el('cb-window').value = String(state.filters.windowMinutes);
+    windowPills(state);
 
     state.packetRows = uniqueRows(data.packets, 'hash', PACKET_LIMIT);
     syncRows(el('cb-packets'), state.packetRows, 'hash', function (row) {
@@ -421,7 +441,7 @@
     text(state.el('cb-status'), 'Updating comparison…');
     state.el('cb-results').setAttribute('aria-busy', 'true');
     var params = new URLSearchParams({ view: 'dashboard' });
-    ['localIata', 'peerIata', 'scope', 'windowMinutes'].forEach(function (key) { if (state.filters[key] !== '') params.set(key, state.filters[key]); });
+    QUERY_FILTERS.forEach(function (key) { if (state.filters[key] !== '') params.set(key, state.filters[key]); });
     try {
       // A page-owned request can be cancelled without disturbing the shared API cache.
       var response = await fetch('/api/cross-border?' + params.toString(), { signal: request.signal });
@@ -470,6 +490,7 @@
     state.click = function (event) {
       var button = event.target.closest('button');
       if (!button || !container.contains(button)) return;
+      if (button.dataset.window) { state.el('cb-window').value = button.dataset.window; state.el('cb-filters').requestSubmit(); return; }
       if (button.id === 'cb-refresh') { load(state); return; }
       if (button.dataset.packet || button.id === 'cb-close-detail') {
         var previous = state.filters.packet;
@@ -522,5 +543,16 @@
     state.root.removeEventListener('click', state.click);
     state.data = {}; state.packetRows = [];
   }
-  registerPage('cross-border', { init: init, destroy: destroy });
+  function updateRoute() {
+    var state = active;
+    if (!state || !state.data.filters) return false;
+    var parsed = URLState.parseHash(location.hash), allowed = QUERY_FILTERS.concat(['packet', 'quality', 'evidence', 'live', 'repeater', 'repeaterPage', 'node', 'tab']);
+    if (parsed.route !== 'cross-border' || Object.keys(parsed.params).some(function (key) { return allowed.indexOf(key) < 0; })) return false;
+    var next = normalizeFilters(parsed.params);
+    if (dataKey(next) !== dataKey(state.filters) || dataKey(next) !== dataKey(normalizeFilters(state.data.filters))) return false;
+    state.filters = next; controls(state); renderEvidence(state);
+    if (state.dashboard) state.dashboard.setView(next); schedule(state);
+    return true;
+  }
+  registerPage('cross-border', { init: init, destroy: destroy, updateRoute: updateRoute });
 })();

@@ -2,7 +2,7 @@
 
 Border links is an opt-in public comparison of a local feed and an isolated peer feed. Open `/#/cross-border`; the visual overview reads `GET /api/cross-border?view=dashboard`. It compares path-width adoption, flood scopes, regional overlap, repeater carrying evidence and reported radio airtime. Packet details remain peer-primary under **Inspect packet and metadata evidence**. None of these views establishes an RF route across a border, packet loss, device misconfiguration or which country caused congestion.
 
-The page refreshes once a minute while visible. Pause live updates when inspecting a snapshot. Region, scope, window, live-update and drill-down choices are bookmarkable. The existing Chart.js renderer is reused; no new frontend dependency or build step is required.
+The page refreshes once a minute while visible. Pause live updates when inspecting a snapshot. Overview, Hash widths, Scopes & regions, Radio load and Repeaters use the existing analytics card/tab conventions. Display-only tab and history changes reuse the loaded snapshot. Region, scope, window, live-update, tab and drill-down choices are bookmarkable. The existing Chart.js renderer is reused; no new frontend dependency or build step is required.
 
 ## Enable deliberately
 
@@ -92,6 +92,8 @@ The legacy packet classifications remain:
 ## Resource budget and acceptance
 
 The dashboard shares the existing three-second build deadline, two-build limit, two-connection peer pool and four-entry cache. Each source scan has a hard 50,000-record ceiling. Node identities, observer identities, hidden-identity checks and metric reads are bounded; display metadata is capped at 500 rows. Region overlap is limited to 16 by 16 cells, scope summaries preserve omitted categories in Other, and per-repeater scope lists are bounded. Applicable caps are explicit; incomplete identities cannot manufacture a unique carrying attribution. The page paginates repeater rows and keeps packet details at the existing limits.
+
+For PostgreSQL dashboard reads, a complete observer selection of at most 500 entries supplies bound numeric row IDs to the time-range query. This lets the database estimate the selected population instead of estimating a transformed IATA expression. The captured population also governs freshness and radio reads, so an IATA metadata update cannot silently mix cohorts mid-build. Partial or legacy metadata retains the IATA query. These row IDs remain private and do not enter the API response.
 
 Regression checks cover independent local populations, own-advert versus carrying widths, all-hop attribution, collisions including hidden candidates, first-record timestamp semantics, scope wildcard separation, sample gaps, weighted airtime/reset handling, privacy, and cancellation. Browser checks use the actual chart renderer and exercise light/dark/mobile layouts, live-refresh teardown, filters and drill-downs. Measure the actual database queries and native host before enabling a larger resource budget; allocation benchmarks are not resident-memory measurements.
 

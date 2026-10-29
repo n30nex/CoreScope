@@ -1,5 +1,6 @@
 /* Border evidence uses the existing theme/customizer tokens. */
-.cb-page { max-width: 1440px; margin: auto; padding: 20px; color: var(--text); font-family: var(--font); }
+.cb-page { max-width: 1600px; margin: auto; padding: 16px 24px; color: var(--text); font-family: var(--font); }
+.cb-page [hidden] { display: none !important; }
 .cb-page h1 { margin: 4px 0; font-size: 28px; }
 .cb-page h2 { margin: 22px 0 8px; font-size: 19px; }
 .cb-page h3 { margin: 0 0 10px; font-size: 15px; }
@@ -12,11 +13,15 @@
 .cb-page button { cursor: pointer; }
 .cb-page button:hover { background: var(--row-hover); }
 .cb-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.cb-header > div:first-child { flex: 1; min-width: 0; }
 .cb-header p { margin: 4px 0 12px; color: var(--text-muted); }
-#cb-status { padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--section-bg); overflow-wrap: anywhere; }
-.cb-filters { display: grid; grid-template-columns: minmax(170px, 1fr) minmax(200px, 1fr) minmax(130px, .7fr) minmax(110px, .5fr) auto; align-items: end; gap: 12px; margin: 18px 0; }
+#cb-status { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--section-bg); overflow-wrap: anywhere; font-size: 13px; }
+.cb-filters { display: grid; grid-template-columns: minmax(170px, 1fr) minmax(200px, 1fr) minmax(130px, .7fr) auto; align-items: end; gap: 12px; margin: 12px 0; }
 .cb-filters label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; min-width: 0; }
 .cb-filters input, .cb-filters select { width: 100%; min-width: 0; }
+.cb-window-pills { grid-column: 1 / -1; margin: 0; gap: 6px; }
+.cb-window-pills button { min-width: 52px; min-height: 36px; font-size: 13px; font-weight: 600; border-radius: 6px; }
+.cb-page .tab-btn.active:hover, .cb-window-pills button.active:hover { background: var(--accent-strong); color: var(--text-on-accent); }
 .cb-filter-help { grid-column: 1 / -1; margin: 0; font-size: 11px; color: var(--text-muted); }
 .cb-sources, .cb-evidence-sources { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .cb-source { min-width: 0; padding: 14px; border: 1px solid var(--border); background: var(--card-bg); }
@@ -59,20 +64,33 @@
 .cb-page > .cb-sources .cb-source { border: 0; border-left: 3px solid var(--accent); padding: 8px 12px; background: var(--section-bg); }
 .cb-page > .cb-sources .cb-source h2 { font-size: 13px; margin-bottom: 4px; }
 .cb-page > .cb-sources .cb-source p { font-size: 12px; }
-.cb-overview-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 22px 0 8px; }
-.cb-overview-metrics > div { min-width: 0; }
-.cb-overview-metrics span, .cb-overview-metrics small { display: block; color: var(--text-muted); font-size: 12px; }
+.cb-overview-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 16px 0 0; margin-bottom: 12px; }
+.cb-overview-metrics > div { min-width: 0; text-align: left; }
+.cb-overview-metrics > div > span, .cb-overview-metrics small { display: block; color: var(--text-muted); font-size: 12px; }
+.cb-overview-metrics small span { display: inline; font-weight: 600; }
 .cb-overview-metrics strong { display: block; font-size: 32px; line-height: 1.35; font-weight: 700; }
 .cb-overview-metrics small { margin-top: 3px; overflow-wrap: anywhere; }
-.cb-dashboard-section { margin-top: 30px; }
+.cb-overview-metrics .stat-card { min-height: 155px; }
+.cb-dashboard-section { margin-top: 20px; }
 .cb-dashboard-section > h2, .cb-dashboard-section .cb-header h2 { font-size: 22px; margin: 0 0 7px; }
 .cb-section-intro { color: var(--text-muted); font-size: 14px; margin: 0 0 16px; }
-.cb-chart-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
-.cb-visual { min-width: 0; padding: 18px; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.cb-chart-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.cb-visual { min-width: 0; }
 .cb-visual h3 { margin: 0 0 8px; font-size: 15px; }
 .cb-visual > h2 { font-size: 20px; }
-.cb-chart { position: relative; width: 100%; height: 205px; }
+.cb-chart { position: relative; width: 100%; height: 240px; }
 .cb-chart canvas { width: 100%; height: 100%; }
+.cb-chart-large { height: 300px; }
+.cb-spark { height: 38px; margin: 4px 0 6px; }
+.cb-chart-donut { height: 260px; }
+.cb-donut-wrap { position: relative; }
+.cb-donut-center { position: absolute; left: 50%; top: calc(50% - 14px); transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
+.cb-donut-center strong { display: block; font-size: 30px; line-height: 1.2; }
+.cb-donut-center span { color: var(--text-muted); font-size: 12px; }
+.cb-analytics-tabs { margin: 18px 0 0; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.cb-analytics-tabs .tab-btn { min-height: 40px; background: var(--card-bg); color: var(--text); border-color: var(--border); transition: none; }
+.cb-analytics-tabs .tab-btn.active { background: var(--accent-strong); color: var(--text-on-accent); border-color: var(--accent-strong); }
+#cb-tab-panel:focus { outline-offset: 4px; }
 .cb-chart-values { margin-top: 12px; border-top: 1px solid var(--border); }
 .cb-chart-values p { font-size: 12px; line-height: 1.65; margin: 9px 0 0; overflow-wrap: anywhere; }
 .cb-chart-help { margin-top: 10px; font-size: 12px; color: var(--text-muted); }
@@ -111,6 +129,7 @@
   .cb-filters { grid-template-columns: 1fr 1fr; }
   .cb-filters > button { justify-self: start; }
   .cb-summary { grid-template-columns: 1fr 1fr; }
+  .cb-overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {
   .cb-page { padding: 14px 10px; }
@@ -133,4 +152,11 @@
   .cb-search-label { width: 100%; min-width: 0; }
   .cb-dashboard-section > h2, .cb-dashboard-section .cb-header h2 { font-size: 20px; }
   .cb-section-intro { font-size: 13px; }
+  .cb-analytics-tabs { flex-wrap: nowrap; max-width: 100%; overflow-x: auto; padding-bottom: 8px; }
+  .cb-analytics-tabs .tab-btn { flex: 0 0 auto; white-space: nowrap; }
+  .cb-overview-metrics .stat-card { min-height: 135px; padding: 12px; }
+  .cb-chart { height: 235px; }
+  .cb-chart-large { height: 270px; }
+  .cb-spark { height: 34px; }
+  .cb-chart-donut { height: 250px; }
 }

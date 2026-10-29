@@ -1238,6 +1238,9 @@ function navigate() {
     moreBtn.classList.toggle('active', !!hasActiveMore);
   }
 
+  // Let an active page restore display-only URL state without discarding its data.
+  if (currentPage === basePage && pages[basePage]?.updateRoute?.(routeParam) === true) return;
+
   if (currentPage && pages[currentPage]?.destroy) {
     pages[currentPage].destroy();
   }
