@@ -312,12 +312,13 @@ func (db *DB) readCrossBorderDataSelected(ctx context.Context, iatas []string, s
 		snapshot.Available = true
 		return snapshot, nil
 	}
-	args = []any{}
-	where = db.crossBorderObserverWhere(iatas, selection, "o.observer_idx", &args)
-	args = append(args, until.Unix())
-	timeBound := "o.timestamp <= " + db.parameter(len(args))
+	historyQuery, args := db.crossBorderHistoryQuery(iatas, selection, until, crossBorderHistoryOldest)
 	var oldest sql.NullInt64
-	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND `+timeBound+` ORDER BY o.timestamp ASC LIMIT 1`, db.crossBorderSelectionArgs(args, selection)...).Scan(&oldest)
+	if historyQuery != "" {
+		err = db.conn.QueryRowContext(ctx, historyQuery, db.crossBorderSelectionArgs(args, selection)...).Scan(&oldest)
+	} else {
+		err = nil
+	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return snapshot, err
 	}
@@ -328,7 +329,8 @@ func (db *DB) readCrossBorderDataSelected(ctx context.Context, iatas []string, s
 	// Source freshness is selected-feed activity, independent of matching peer
 	// hashes. Zero overlap must not make a fresh reference look disconnected.
 	var latest sql.NullInt64
-	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND `+timeBound+` ORDER BY o.timestamp DESC LIMIT 1`, db.crossBorderSelectionArgs(args, selection)...).Scan(&latest)
+	historyQuery, args = db.crossBorderHistoryQuery(iatas, selection, until, crossBorderHistoryLatest)
+	err = db.conn.QueryRowContext(ctx, historyQuery, db.crossBorderSelectionArgs(args, selection)...).Scan(&latest)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return snapshot, err
 	}
@@ -339,7 +341,8 @@ func (db *DB) readCrossBorderDataSelected(ctx context.Context, iatas []string, s
 	// A row after the report cutoff may be concurrent ingestion, or a clock
 	// disagreement. Keep it explicit without treating it as zero-age evidence.
 	var after sql.NullInt64
-	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND o.timestamp > `+db.parameter(len(args))+` ORDER BY o.timestamp DESC LIMIT 1`, db.crossBorderSelectionArgs(args, selection)...).Scan(&after)
+	historyQuery, args = db.crossBorderHistoryQuery(iatas, selection, until, crossBorderHistoryAfter)
+	err = db.conn.QueryRowContext(ctx, historyQuery, db.crossBorderSelectionArgs(args, selection)...).Scan(&after)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return snapshot, err
 	}

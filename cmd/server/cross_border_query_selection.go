@@ -2,9 +2,49 @@ package main
 
 import (
 	"strings"
+	"time"
 
 	"github.com/meshcore-analyzer/dbconfig"
 )
+
+type crossBorderHistoryBound uint8
+
+const (
+	crossBorderHistoryOldest crossBorderHistoryBound = iota
+	crossBorderHistoryLatest
+	crossBorderHistoryAfter
+)
+
+func (db *DB) crossBorderHistoryQuery(iatas []string, selection []crossBorderSelectedObserver, until time.Time, bound crossBorderHistoryBound) (string, []any) {
+	// Even a per-observer oldest seek can walk extensive dead history during
+	// retention. The optimized dashboard leaves this optional bound unknown;
+	// coverage is derived conservatively from its bounded observation sample.
+	if selection != nil && bound == crossBorderHistoryOldest {
+		return "", nil
+	}
+	args := []any{}
+	column := "o.observer_idx"
+	if selection != nil {
+		column = "ob.rowid"
+	}
+	where := db.crossBorderObserverWhere(iatas, selection, column, &args)
+	args = append(args, until.Unix())
+	comparison, direction := "<=", "DESC"
+	if bound == crossBorderHistoryOldest {
+		direction = "ASC"
+	}
+	if bound == crossBorderHistoryAfter {
+		comparison = ">"
+	}
+	if selection != nil {
+		// At most one result per captured observer, with an equality/range
+		// predicate for the existing observer/time index. No global ordering.
+		query := `SELECT MAX((SELECT o.timestamp FROM observations o WHERE o.observer_idx=ob.rowid AND o.timestamp ` + comparison + ` ` + db.parameter(len(args)) + ` ORDER BY o.timestamp DESC LIMIT 1)) FROM observers ob WHERE ` + where
+		return query, args
+	}
+	query := `SELECT o.timestamp FROM observations o ` + db.crossBorderObserverJoin() + ` WHERE ` + where + ` AND o.timestamp ` + comparison + ` ` + db.parameter(len(args)) + ` ORDER BY o.timestamp ` + direction + ` LIMIT 1`
+	return query, args
+}
 
 func (db *DB) crossBorderDashboardObserverSelection(snapshot crossBorderSnapshot, dashboard bool) []crossBorderSelectedObserver {
 	if !dashboard || db.Backend() != dbconfig.Postgres || !db.isV3 || !snapshot.ObserverSelectionComplete || len(snapshot.SelectedObserverRows) > crossBorderDashboardMetadata {
