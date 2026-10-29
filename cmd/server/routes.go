@@ -29,16 +29,17 @@ const memBreakdownNote = "Per-component *MB count string content + one Go string
 
 // Server holds shared state for route handlers.
 type Server struct {
-	db        *DB
-	cfg       *Config
-	hub       *Hub
-	store     *PacketStore // in-memory packet store (nil = fallback to DB)
-	configDir string       // directory containing config.json (for write-back via PUT /api/config/geo-filter)
-	startedAt time.Time
-	perfStats *PerfStats
-	version   string
-	commit    string
-	buildTime string
+	db          *DB
+	cfg         *Config
+	hub         *Hub
+	store       *PacketStore // in-memory packet store (nil = fallback to DB)
+	configDir   string       // directory containing config.json (for write-back via PUT /api/config/geo-filter)
+	startedAt   time.Time
+	perfStats   *PerfStats
+	version     string
+	commit      string
+	buildTime   string
+	crossBorder *crossBorderService
 
 	// Cached runtime.MemStats to avoid stop-the-world pauses on every health check
 	memStatsMu       sync.Mutex
@@ -165,7 +166,7 @@ func NewServer(db *DB, cfg *Config, hub *Hub) *Server {
 	if cfg != nil {
 		cfg.applyListLimitsDefaults()
 	}
-	return &Server{
+	s := &Server{
 		db:        db,
 		cfg:       cfg,
 		hub:       hub,
@@ -175,6 +176,10 @@ func NewServer(db *DB, cfg *Config, hub *Hub) *Server {
 		commit:    resolveCommit(),
 		buildTime: resolveBuildTime(),
 	}
+	if cfg.GetCrossBorder().Enabled {
+		s.crossBorder = newCrossBorderService(s)
+	}
+	return s
 }
 
 const memStatsTTL = 5 * time.Second
@@ -273,6 +278,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/stats", s.handleStats).Methods("GET")
 	r.HandleFunc("/api/scope-stats", s.handleScopeStats).Methods("GET")
 	r.HandleFunc("/api/scope-audit", s.handleScopeAudit).Methods("GET") // #1975
+	r.HandleFunc("/api/cross-border", s.handleCrossBorder).Methods("GET")
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
 	r.HandleFunc("/api/perf/io", s.handlePerfIO).Methods("GET")
 	r.HandleFunc("/api/perf/database", s.handlePerfPostgres).Methods("GET")

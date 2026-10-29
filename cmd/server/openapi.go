@@ -158,6 +158,13 @@ func routeDescriptions() map[string]routeMeta {
 			QueryParams: []paramMeta{
 				{Name: "window", Description: "Time window: 1h, 24h, or 7d (default 24h)", Type: "string"},
 			}},
+		"GET /api/cross-border": {Summary: "Isolated cross-network diagnostics", Description: "Public opt-in, peer-first bounded metadata comparison against a separately named read-only peer database. Returns source query/data availability, retained evidence ages, region options, sampled counts, observer/repeater metadata, bounded packet evidence and explicit completeness limits. Source availability is not broker-connected proof. Shared observer identities are excluded from independent overlap; matching content does not prove RF border transit, latency, loss, or device configuration. Radio descriptions identify hardware; any reference profile is separately configured community guidance. HTTP 200 also carries disabled, selection_required, partial or unavailable states, including a busy finding when report capacity is full; invalid filters return 400. Credentials and raw/decrypted message content are never returned.", Tag: "analytics",
+			QueryParams: []paramMeta{
+				{Name: "localIata", Description: "Comma-separated explicit observer IATA labels within the operator's local allowlist; blank uses configured defaults", Type: "string"},
+				{Name: "peerIata", Description: "Comma-separated explicit peer observer IATA labels; blank uses configured defaults", Type: "string"},
+				{Name: "scope", Description: "all, unscoped, unknown, or a case-preserved named scope selecting the peer cohort; matching local content retains its own scope", Type: "string"},
+				{Name: "windowMinutes", Description: "15, 60, 180 or 360, up to the operator's maximum; default 60", Type: "integer"},
+			}},
 
 		// Analytics
 		"GET /api/analytics/rf":              {Summary: "RF analytics", Description: "SNR/RSSI distributions and statistics.", Tag: "analytics"},

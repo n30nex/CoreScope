@@ -1,12 +1,5 @@
 package main
 
-import (
-	"context"
-	"net/http"
-	"net/url"
-	"time"
-)
-
 // CrossBorderConfig is opt-in. The peer reader URL is supplied only through
 // CORESCOPE_CROSS_BORDER_PEER_DATABASE_URL and is never part of public config.
 type CrossBorderConfig struct {
@@ -26,6 +19,8 @@ type CrossBorderConfig struct {
 	CacheSeconds          int                          `json:"cacheSeconds"`
 	CacheEntries          int                          `json:"cacheEntries"`
 	MaxConnections        int                          `json:"maxConnections"`
+	MaxConcurrentBuilds   int                          `json:"maxConcurrentBuilds"`
+	MaxSelectedIATA       int                          `json:"maxSelectedIata"`
 	StaleAfterSeconds     int                          `json:"staleAfterSeconds"`
 	PeerReferenceProfile  *CrossBorderReferenceProfile `json:"peerReferenceProfile,omitempty"`
 }
@@ -110,6 +105,7 @@ type CrossBorderSummary struct {
 	SharedObserverOnlyPackets int `json:"sharedObserverOnlyPackets"`
 	NotSeenLocallyPackets     int `json:"notSeenLocallyPackets"`
 	DuplicateObserverIDs      int `json:"duplicateObserverIds"`
+	IdentityUnverifiedPackets int `json:"identityUnverifiedPackets"`
 }
 
 type CrossBorderScope struct {
@@ -220,12 +216,15 @@ type crossBorderObservationRow struct {
 	PayloadType, RouteType                          int
 	ScopeName                                       *string
 	SNR, RSSI                                       *float64
+	RawHexLength                                    int
 }
 
 type crossBorderNode struct {
 	PublicKey, Name, Role                string
 	LastSeenAt, ConfiguredScope, ScopeAt *string
 	Lat, Lon                             *float64
+	DeclaredTruncated                    *bool
+	Hidden                               bool
 }
 
 type crossBorderSnapshot struct {
@@ -234,43 +233,11 @@ type crossBorderSnapshot struct {
 	Nodes                     []crossBorderNode
 	Observations              []crossBorderObservationRow
 	OldestStoredObservationAt *string
+	LatestStoredObservationAt *string
 	ObservationsTruncated     bool
 	ObserversTruncated        bool
 	NodesTruncated            bool
 	SharedObserverIDs         []string
-}
-
-// RED stubs: each new entry point deliberately returns an empty result until
-// the regression tests have been reviewed and recorded by the parent agent.
-func (cfg *Config) GetCrossBorder() CrossBorderConfig { return CrossBorderConfig{} }
-
-func parseCrossBorderFilters(q url.Values, cfg CrossBorderConfig) (CrossBorderFilters, error) {
-	return CrossBorderFilters{}, nil
-}
-
-func (db *DB) readCrossBorder(ctx context.Context, iatas []string, since time.Time, cfg CrossBorderConfig, hashes []string) (crossBorderSnapshot, error) {
-	return crossBorderSnapshot{}, nil
-}
-
-func buildCrossBorder(ctx context.Context, cfg CrossBorderConfig, filters CrossBorderFilters, local, peer crossBorderSnapshot, now time.Time) (CrossBorderResponse, error) {
-	return CrossBorderResponse{}, nil
-}
-
-func (s *Server) handleCrossBorder(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, CrossBorderResponse{})
-}
-
-type crossBorderCacheEntry struct {
-	Response CrossBorderResponse
-	At       time.Time
-}
-
-type crossBorderService struct {
-	cfg   CrossBorderConfig
-	load  func(context.Context, CrossBorderFilters) (CrossBorderResponse, error)
-	cache map[string]crossBorderCacheEntry
-}
-
-func (svc *crossBorderService) response(ctx context.Context, filters CrossBorderFilters) (CrossBorderResponse, error) {
-	return CrossBorderResponse{}, nil
+	Regions                   []CrossBorderRegion
+	SharedIdentityComplete    bool
 }

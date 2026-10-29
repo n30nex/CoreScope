@@ -505,3 +505,72 @@ func TestCrossBorderCacheCoalescesAndBoundsKeys(t *testing.T) {
 		t.Fatalf("canceled waiter must leave immediately: %v", err)
 	}
 }
+
+func TestCrossBorderConcurrentDistinctBuildsAreBounded(t *testing.T) {
+	cfg := crossBorderTestConfig()
+	cfg.MaxConcurrentBuilds = 2
+	started := make(chan string, 4)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	var active, loads atomic.Int64
+	svc := &crossBorderService{cfg: cfg, load: func(ctx context.Context, f CrossBorderFilters) (CrossBorderResponse, error) {
+		loads.Add(1)
+		if n := active.Add(1); n > 2 {
+			t.Errorf("active distinct reports=%d, cap=2", n)
+		}
+		defer active.Add(-1)
+		started <- f.Scope
+		select {
+		case <-release:
+			return CrossBorderResponse{Status: "ready", Filters: f}, nil
+		case <-ctx.Done():
+			return CrossBorderResponse{}, ctx.Err()
+		}
+	}}
+	results := make(chan error, 2)
+	for _, scope := range []string{"first", "second"} {
+		f := crossBorderTestFilters()
+		f.Scope = scope
+		go func(f CrossBorderFilters) { _, err := svc.response(context.Background(), f); results <- err }(f)
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("expected one admitted report build; none started")
+		}
+	}
+	third := crossBorderTestFilters()
+	third.Scope = "third"
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := svc.response(ctx, third); !errors.Is(err, errCrossBorderBusy) {
+		t.Fatalf("distinct request over cap must return busy without queueing: %v", err)
+	}
+	first := crossBorderTestFilters()
+	first.Scope = "first"
+	waitCtx, cancelWait := context.WithCancel(context.Background())
+	waitResult := make(chan error, 1)
+	go func() { _, err := svc.response(waitCtx, first); waitResult <- err }()
+	cancelWait()
+	select {
+	case err := <-waitResult:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("same-key waiter cancellation: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled waiter remained queued")
+	}
+	if active.Load() != 2 || loads.Load() != 2 {
+		t.Fatalf("same-key waiter canceled or duplicated the shared report: active=%d loads=%d", active.Load(), loads.Load())
+	}
+	unblock()
+	for i := 0; i < 2; i++ {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := svc.response(context.Background(), third); err != nil || got.Filters.Scope != "third" {
+		t.Fatalf("released capacity not reusable: %+v %v", got.Filters, err)
+	}
+}

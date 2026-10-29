@@ -370,6 +370,7 @@ func main() {
 
 	// HTTP server
 	srv := NewServer(database, cfg, hub)
+	defer srv.closeCrossBorder()
 	srv.configDir = configDir
 	srv.store = store
 	// Optional user management (off by default). Fails startup on a bad
@@ -556,6 +557,7 @@ func main() {
 
 		// 3b. Close users.db (user management, opt-in; no-op when off).
 		srv.closeUserManagement()
+		srv.closeCrossBorder()
 
 		// 4. Close the database connection pool
 		if err := dbClose(); err != nil {
