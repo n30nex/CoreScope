@@ -14,11 +14,16 @@
       return Array.from(new Set(items.map(function (s) { return s.trim().toUpperCase(); }).filter(Boolean))).join(',');
     }
     var minutes = Number(input.windowMinutes);
-    return {
+    var result = {
       localIata: iata(input.localIata), peerIata: iata(input.peerIata),
       scope: String(input.scope || 'all'), windowMinutes: WINDOWS.indexOf(minutes) >= 0 ? minutes : '',
       packet: String(input.packet || ''), quality: input.quality === '1' ? '1' : ''
     };
+    ['evidence', 'live'].forEach(function (key) { if (input[key] === '0' || input[key] === '1') result[key] = input[key]; });
+    if (input.repeater) result.repeater = String(input.repeater).slice(0, 80);
+    if (input.node) result.node = String(input.node).slice(0, 140);
+    if (Number(input.repeaterPage) > 0) result.repeaterPage = String(Math.min(39, Math.floor(Number(input.repeaterPage))));
+    return result;
   }
 
   function numberLabel(value) {
@@ -58,6 +63,20 @@
     if (data.enabled === false) return '';
     var complete = data.completeness || {}, sources = data.sources || {};
     var sourceRows = [sources.peer || {}, sources.local || {}], notes = [];
+    if (data.dashboard) {
+      var dashboardSources = [data.dashboard.local || {}, data.dashboard.peer || {}];
+      if (dashboardSources.some(function (source) { return source.status === 'unavailable'; })) notes.push('One or more sources are unavailable.');
+      if (dashboardSources.some(function (source) { return source.truncated; })) notes.push('Some evidence is omitted by sample limits; gaps remain unknown.');
+      if (dashboardSources.some(function (source) { return source.nodeIndexComplete === false; })) notes.push('Repeater identities are incomplete.');
+      if (dashboardSources.some(function (source) { return source.repeatersTruncated; })) notes.push('The repeater list is limited.');
+      if (dashboardSources.some(function (source) { return source.scopesTruncated; })) notes.push('Scope categories are limited.');
+      if (data.dashboard.regionPairsTruncated) notes.push('Region comparisons are limited.');
+      if (dashboardSources.some(function (source) { return source.radio && source.radio.truncated; })) notes.push('Airtime reports are limited.');
+      if (data.dashboard.identityComplete === false) notes.push('Observer identity check incomplete for regional matches.');
+      if (sourceRows.some(function (source) { return source.status === 'stale'; })) notes.push('One or more sources contain stale evidence.');
+      if (sourceRows.some(function (source) { return source.latestAfterSnapshotAt != null; })) notes.push('Observations after the snapshot cutoff were excluded; refresh to compare current evidence.');
+      return notes.length ? 'Partial comparison. ' + notes.join(' ') : '';
+    }
     if (data.status === 'partial' || complete.complete === false) notes.push('Partial comparison.');
     if (data.status === 'unavailable' || sourceRows.some(function (source) { return source.status === 'unavailable'; })) notes.push('One or more sources are unavailable.');
     if (sourceRows.some(function (source) { return source.status === 'stale'; })) notes.push('One or more sources contain stale evidence.');
@@ -120,28 +139,29 @@
   function pageHtml() {
     return '<div class="cb-page">' +
       '<header class="cb-header"><div><a href="#/tools">Tools</a><h1>Border links</h1>' +
-      '<p id="cb-intro">Compare packets from the peer feed with Canadian observations.</p></div>' +
-      '<button type="button" id="cb-refresh">Refresh</button></header>' +
+      '<p id="cb-intro">Compare path widths, scopes and radio airtime across the border.</p></div>' +
+      '<div class="cb-live-controls"><label><input type="checkbox" id="cb-live" checked> Live updates · every minute</label><button type="button" id="cb-refresh">Refresh</button></div></header>' +
       '<p id="cb-status" role="status" aria-live="polite">Loading peer telemetry…</p>' +
       '<form id="cb-filters" class="cb-filters" aria-label="Border link filters">' +
-      '<label>Peer region / IATA<input id="cb-peer" name="peerIata" list="cb-peer-options" placeholder="Operator default" maxlength="160" autocomplete="off"></label>' +
+      '<label>US / peer regions<input id="cb-peer" name="peerIata" list="cb-peer-options" placeholder="Operator default" maxlength="160" autocomplete="off"></label>' +
       '<datalist id="cb-peer-options"></datalist>' +
-      '<label>Canadian reference region / IATA<input id="cb-local" name="localIata" list="cb-local-options" placeholder="Operator default" maxlength="160" autocomplete="off"></label>' +
+      '<label>Canadian regions<input id="cb-local" name="localIata" list="cb-local-options" placeholder="Operator default" maxlength="160" autocomplete="off"></label>' +
       '<datalist id="cb-local-options"></datalist>' +
-      '<label>Peer scope<select id="cb-scope" name="scope"><option value="all">All scopes</option><option value="unscoped">Unscoped</option><option value="unknown">Unknown scope</option></select></label>' +
+      '<label>Scope<select id="cb-scope" name="scope"><option value="all">All scopes</option><option value="unscoped">Unscoped</option><option value="unknown">Unknown scope</option></select></label>' +
       '<label>Window<select id="cb-window" name="windowMinutes"><option value="">Operator default</option></select></label><button type="submit">Apply filters</button>' +
-      '<p class="cb-filter-help">Use three-letter IATA codes, separated by commas. Blank uses the operator default. Scope selects peer traffic; the window applies to both sources. Canadian matches may have a different or unknown scope.</p></form>' +
-      '<div class="cb-sources"><section class="cb-source" aria-labelledby="cb-peer-title"><h2 id="cb-peer-title">Peer feed · primary</h2><p id="cb-peer-source"></p></section>' +
-      '<section class="cb-source cb-reference" aria-labelledby="cb-local-title"><h2 id="cb-local-title">Canadian feed · reference</h2><p id="cb-local-source"></p></section></div>' +
-      '<p class="cb-caveat">Matching content in both feeds does not prove a cross-border radio path.</p>' +
-      '<div id="cb-results" hidden><p id="cb-quality-warning" class="cb-warning" role="status" hidden></p><dl class="cb-summary">' +
+      '<p class="cb-filter-help">Choose region codes from the suggestions, separated by commas. Blank uses the default. Scope filters both overview samples; radio reports include all scopes.</p></form>' +
+      '<div class="cb-sources"><section class="cb-source" aria-labelledby="cb-peer-title"><h2 id="cb-peer-title">US / peer listeners</h2><p id="cb-peer-source"></p></section>' +
+      '<section class="cb-source cb-reference" aria-labelledby="cb-local-title"><h2 id="cb-local-title">Canadian listeners</h2><p id="cb-local-source"></p></section></div>' +
+      '<div id="cb-results" hidden><p id="cb-quality-warning" class="cb-warning" role="status" hidden></p>' +
+      (typeof CrossBorderDashboard !== 'undefined' ? CrossBorderDashboard.html() : '<p class="cb-warning">The dashboard could not load. Inspect the saved evidence below.</p>') +
+      '<details id="cb-evidence" class="cb-evidence-disclosure"><summary>Inspect packet and metadata evidence</summary><p class="cb-note">Packet details include Canadian matches in other scopes to help trace the same content.</p><p id="cb-detail-quality-warning" class="cb-note" hidden></p><dl class="cb-summary">' +
       '<div><dt>Peer packets</dt><dd id="cb-peer-count">Unknown</dd></div>' +
       '<div><dt>Matching Canadian packets</dt><dd id="cb-independent-count">Unknown</dd><small>Distinct observers · among peer packets</small></div>' +
       '<div><dt>Shared-identity matches</dt><dd id="cb-shared-count">Unknown</dd><small>Same observer or shared-feed identity · among peer packets</small></div>' +
       '<div class="cb-reference"><dt>All Canadian matches</dt><dd id="cb-local-count">Unknown</dd><small>Among peer packets; includes shared-identity matches</small></div></dl>' +
       '<details id="cb-quality" class="cb-quality"><summary>Data quality and limits</summary><div class="cb-quality-body">' +
       '<p class="cb-note">Missing observations are not packet loss or evidence of misconfiguration. Matches use packet content; observers present in both feeds do not count as distinct observers.</p>' +
-      '<p class="cb-note">Retained evidence dates do not prove continuous collection. Declared scopes are the latest reports; observed forwarding uses unambiguous flood last-hop evidence. Reported radio metadata may describe hardware or a profile; radio and relay reports do not verify per-packet settings.</p>' +
+      '<p class="cb-note">Retained evidence dates do not prove continuous collection. Declared scopes are the latest reports; Overview carrying uses attributable flood hops; detailed records retain individual observations. Reported radio metadata may describe hardware or a profile; radio and relay reports do not verify per-packet settings.</p>' +
       '<p id="cb-completeness" class="cb-note"></p><div class="cb-sources"><section><h3>Peer source</h3><p id="cb-peer-quality" class="cb-note"></p>' +
       '<p id="cb-peer-profile" class="cb-profile cb-note" hidden><strong>Community recommendation · reference only</strong><a></a><span></span></p></section>' +
       '<section class="cb-reference"><h3>Canadian reference source</h3><p id="cb-local-quality" class="cb-note"></p>' +
@@ -165,7 +185,7 @@
       '<p class="cb-note">Reported radio metadata is the latest broker string, which may describe hardware or a profile. It does not verify per-packet settings.</p>' +
       '<p id="cb-observer-count" class="cb-note"></p>' +
       table('cb-observers', 'Peer observer provenance and latest reported settings', ['Observer', 'Reported radio metadata', 'Latest relay report', 'Sample evidence', 'Last seen / location']) +
-      '<p id="cb-observers-empty" hidden>No peer observer metadata available for this selection.</p></section></div></div>';
+      '<p id="cb-observers-empty" hidden>No peer observer metadata available for this selection.</p></section></details></div></div>';
   }
 
   // Each refresh visits at most the displayed cap and retains unchanged rows/cells.
@@ -220,13 +240,17 @@
     }
     scope.value = state.filters.scope;
     state.el('cb-quality').open = state.filters.quality === '1';
+    state.el('cb-evidence').open = state.filters.evidence === '1' || Boolean(state.filters.packet);
+    state.el('cb-live').checked = state.filters.live !== '0';
   }
   function sourceText(source, snapshot) {
     source = source || {};
     var status = ({ available: 'Available', stale: 'Stale retained data', empty: 'No observations', unavailable: 'Unavailable',
       after_snapshot: 'Only after-snapshot observations', disabled: 'Disabled', selection_required: 'Select a region' })[source.status] || 'Status unknown';
+    var stamp = source.latestObservationAt ? new Date(source.latestObservationAt) : null;
+    var readable = stamp && Number.isFinite(stamp.getTime()) ? stamp.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Unknown';
     return known(source.label) + ' · ' + status + '\nRegions: ' + (array(source.selectionIata).join(', ') || 'Not selected') +
-      '\nLatest observation: ' + known(source.latestObservationAt) + ' · ' + ageAt(source.latestObservationAt, snapshot) + ' at snapshot';
+      '\nLatest observation: ' + readable + ' · ' + ageAt(source.latestObservationAt, snapshot) + ' at snapshot';
   }
   function sourceQuality(source) {
     source = source || {};
@@ -289,8 +313,10 @@
     var available = referenceAvailable(data);
     var statuses = { ready: 'Comparison ready', partial: 'Partial comparison · some evidence is missing or limited', unavailable: 'Data unavailable',
       disabled: 'Border links is disabled on this instance', selection_required: 'Choose peer and Canadian reference regions to compare' };
-    text(el('cb-status'), (statuses[data.status] || 'Comparison status unknown') + ' · Updated: ' + known(data.generatedAt));
-    text(el('cb-intro'), 'Compare packets reported by ' + (sources.peer && sources.peer.label || 'the peer feed') + ' with Canadian observations.');
+    var updated = data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Unknown';
+    var status = data.dashboard && data.enabled ? (qualityNotice(data) ? 'Partial comparison' : 'Comparison ready') : statuses[data.status] || 'Comparison status unknown';
+    text(el('cb-status'), status + ' · Updated ' + updated);
+    text(el('cb-intro'), 'See how path widths, scopes and radio airtime compare between Canadian listeners and ' + (sources.peer && sources.peer.label || 'the peer feed') + '.');
     text(el('cb-peer-source'), sourceText(sources.peer, data.generatedAt));
     text(el('cb-local-source'), sourceText(sources.local, data.generatedAt));
     text(el('cb-peer-quality'), sourceQuality(sources.peer));
@@ -302,6 +328,9 @@
     var notice = qualityNotice(data);
     text(el('cb-quality-warning'), notice);
     el('cb-quality-warning').hidden = !notice;
+    var detailNotice = qualityNotice(Object.assign({}, data, { dashboard: null }));
+    text(el('cb-detail-quality-warning'), detailNotice);
+    el('cb-detail-quality-warning').hidden = !detailNotice;
     var peerAvailable = sourceAvailable(data, 'peer');
     text(el('cb-peer-count'), peerAvailable ? numberLabel(summary.peerPackets) : 'Unavailable');
     text(el('cb-independent-count'), available && peerAvailable ? numberLabel(summary.independentSharedPackets) : 'Unavailable');
@@ -369,15 +398,29 @@
     text(el('cb-observer-count'), 'Showing ' + observers.length + ' of ' + array(data.peerObservers).length + ' returned peer observers.' + (array(data.peerObservers).length > observers.length ? ' Some entries are not shown.' : ''));
     el('cb-observers-empty').hidden = observers.length > 0;
     renderEvidence(state);
+    if (state.dashboard) state.dashboard.update(data, state.filters);
+  }
+
+  function schedule(state) {
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = null;
+    if (state !== active || state.filters.live === '0' || document.hidden || state.data.enabled === false) return;
+    state.timer = setTimeout(function () {
+      state.timer = null;
+      if (state !== active || state.filters.live === '0' || state.data.enabled === false) return;
+      if (!document.hidden && !state.loading) load(state);
+      else schedule(state);
+    }, 60000);
   }
 
   async function load(state) {
     if (state.request) state.request.abort();
     var request = new AbortController(); state.request = request;
-    var generation = ++state.generation;
-    text(state.el('cb-status'), 'Loading peer telemetry…');
+    var generation = ++state.generation; state.loading = true;
+    if (state.timer) clearTimeout(state.timer); state.timer = null;
+    text(state.el('cb-status'), 'Updating comparison…');
     state.el('cb-results').setAttribute('aria-busy', 'true');
-    var params = new URLSearchParams();
+    var params = new URLSearchParams({ view: 'dashboard' });
     ['localIata', 'peerIata', 'scope', 'windowMinutes'].forEach(function (key) { if (state.filters[key] !== '') params.set(key, state.filters[key]); });
     try {
       // A page-owned request can be cancelled without disturbing the shared API cache.
@@ -387,7 +430,7 @@
       if (state !== active || generation !== state.generation) return;
       if (!data || typeof data.enabled !== 'boolean') throw new Error('Invalid response');
       if (data.filters) {
-        state.filters = normalizeFilters(Object.assign({}, data.filters, { packet: state.filters.packet, quality: state.filters.quality }));
+        state.filters = normalizeFilters(Object.assign({}, state.filters, data.filters, { packet: state.filters.packet, quality: state.filters.quality }));
         setHash(state, true); controls(state);
       }
       render(state, data);
@@ -400,20 +443,24 @@
       text(state.el('cb-local-source'), 'Canadian reference unavailable. No comparison can be made.');
       state.el('cb-peer-profile').hidden = true; state.el('cb-local-profile').hidden = true;
     } finally {
-      if (state === active && generation === state.generation) state.el('cb-results').removeAttribute('aria-busy');
+      if (state === active && generation === state.generation) { state.loading = false; state.el('cb-results').removeAttribute('aria-busy'); schedule(state); }
     }
   }
 
   function init(container) {
-    var state = { root: container, filters: normalizeFilters(URLState.parseHash(location.hash).params), request: null, generation: 0, packetRows: [], data: {} };
+    var state = { root: container, filters: normalizeFilters(URLState.parseHash(location.hash).params), request: null, generation: 0, packetRows: [], data: {}, timer: null, loading: false };
     state.el = function (id) { return container.querySelector('#' + id); };
     active = state;
     container.innerHTML = pageHtml();
     controls(state);
+    if (typeof CrossBorderDashboard !== 'undefined') state.dashboard = CrossBorderDashboard.mount(state.el('cb-dashboard'), {
+      onPair: function (local, peer) { state.filters = normalizeFilters(Object.assign({}, state.filters, { localIata: local, peerIata: peer, packet: '', node: '', repeaterPage: '' })); setHash(state, false); controls(state); load(state); },
+      onView: function (change, replace) { state.filters = normalizeFilters(Object.assign({}, state.filters, change)); setHash(state, Boolean(replace)); }
+    });
     state.submit = function (event) {
       event.preventDefault();
-      var filters = normalizeFilters({ localIata: state.el('cb-local').value, peerIata: state.el('cb-peer').value,
-        scope: state.el('cb-scope').value, windowMinutes: state.el('cb-window').value, quality: state.filters.quality });
+      var filters = normalizeFilters(Object.assign({}, state.filters, { localIata: state.el('cb-local').value, peerIata: state.el('cb-peer').value,
+        scope: state.el('cb-scope').value, windowMinutes: state.el('cb-window').value, packet: '', node: '', repeaterPage: '' }));
       if ([filters.localIata, filters.peerIata].some(function (value) { return value && !/^[A-Z]{3}(,[A-Z]{3})*$/.test(value); })) {
         text(state.el('cb-status'), 'Enter three-letter IATA codes separated by commas, or leave blank for the operator default.');
         return;
@@ -444,6 +491,17 @@
       setHash(state, false);
     };
     state.el('cb-quality').addEventListener('toggle', state.toggleQuality);
+    state.toggleEvidence = function () {
+      if (state !== active) return;
+      var value = state.el('cb-evidence').open ? '1' : '0';
+      if ((state.filters.evidence || '0') === value) return;
+      state.filters.evidence = value; setHash(state, false);
+    };
+    state.live = function () { state.filters.live = state.el('cb-live').checked ? '1' : '0'; setHash(state, false); schedule(state); };
+    state.visibility = function () { if (state !== active) return; if (!document.hidden && state.filters.live !== '0' && !state.loading) load(state); else schedule(state); };
+    state.el('cb-evidence').addEventListener('toggle', state.toggleEvidence);
+    state.el('cb-live').addEventListener('change', state.live);
+    document.addEventListener('visibilitychange', state.visibility);
     container.addEventListener('click', state.click);
     load(state);
   }
@@ -454,6 +512,11 @@
     active = null;
     state.generation++;
     if (state.request) state.request.abort();
+    if (state.timer) clearTimeout(state.timer);
+    if (state.dashboard) state.dashboard.destroy();
+    state.el('cb-evidence').removeEventListener('toggle', state.toggleEvidence);
+    state.el('cb-live').removeEventListener('change', state.live);
+    document.removeEventListener('visibilitychange', state.visibility);
     state.el('cb-filters').removeEventListener('submit', state.submit);
     state.el('cb-quality').removeEventListener('toggle', state.toggleQuality);
     state.root.removeEventListener('click', state.click);

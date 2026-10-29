@@ -147,6 +147,10 @@ func parseCrossBorderFilters(q url.Values, cfg CrossBorderConfig) (CrossBorderFi
 		return canonicalCrossBorderIATA(parts, maxSelected), nil
 	}
 	f := CrossBorderFilters{Scope: "all", WindowMinutes: cfg.DefaultWindowMinutes}
+	f.View = strings.TrimSpace(q.Get("view"))
+	if len(q["view"]) > 1 || (f.View != "" && f.View != "dashboard") {
+		return f, errors.New("unsupported view")
+	}
 	var err error
 	if f.LocalIATA, err = parse("localIata", cfg.DefaultLocalIATA); err != nil {
 		return f, err
@@ -363,6 +367,9 @@ func (s *Server) handleCrossBorder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (svc *crossBorderService) loadReport(ctx context.Context, f CrossBorderFilters) (CrossBorderResponse, error) {
+	if f.View == "dashboard" {
+		return svc.loadDashboard(ctx, f)
+	}
 	now := time.Now().UTC()
 	since := now.Add(-time.Duration(f.WindowMinutes) * time.Minute)
 	peerDB, err := svc.peerReader(ctx)

@@ -38,6 +38,7 @@ type CrossBorderReferenceProfile struct {
 }
 
 type CrossBorderFilters struct {
+	View          string   `json:"view,omitempty"`
 	LocalIATA     []string `json:"localIata"`
 	PeerIATA      []string `json:"peerIata"`
 	Scope         string   `json:"scope"`
@@ -194,6 +195,7 @@ type CrossBorderFinding struct {
 }
 
 type CrossBorderResponse struct {
+	Dashboard     *CrossBorderDashboard   `json:"dashboard,omitempty"`
 	Enabled       bool                    `json:"enabled"`
 	Status        string                  `json:"status"`
 	GeneratedAt   string                  `json:"generatedAt"`
@@ -213,6 +215,7 @@ type CrossBorderResponse struct {
 // never serialized and only its packet header/path is inspected.
 type crossBorderObservationRow struct {
 	Hash, ObserverID, Direction, RawHex, FromPubkey string
+	ObserverIATA                                    string
 	CanonicalRawHex                                 string
 	Timestamp                                       int64
 	PayloadType, RouteType                          int
@@ -230,18 +233,24 @@ type crossBorderNode struct {
 }
 
 type crossBorderSnapshot struct {
-	Available                 bool
-	Observers                 []CrossBorderObserver
-	Nodes                     []crossBorderNode
-	Observations              []crossBorderObservationRow
-	OldestStoredObservationAt *string
-	LatestStoredObservationAt *string
-	LatestAfterSnapshotAt     *string
-	ObservationsTruncated     bool
-	ObserversTruncated        bool
-	NodesTruncated            bool
-	SharedObserverIDs         []string
-	Regions                   []CrossBorderRegion
-	SharedIdentityComplete    bool
-	SharedIdentityChecked     bool
+	DashboardNodes             []crossBorderNodeIdentity
+	DashboardNodeIndexComplete bool
+	DashboardMetrics           []crossBorderMetricRow
+	DashboardMetricsAvailable  bool
+	DashboardMetricsTruncated  bool
+	DashboardScanCutoff        *int64 // oldest SQL-sampled second, before privacy filtering
+	Available                  bool
+	Observers                  []CrossBorderObserver
+	Nodes                      []crossBorderNode
+	Observations               []crossBorderObservationRow
+	OldestStoredObservationAt  *string
+	LatestStoredObservationAt  *string
+	LatestAfterSnapshotAt      *string
+	ObservationsTruncated      bool
+	ObserversTruncated         bool
+	NodesTruncated             bool
+	SharedObserverIDs          []string
+	Regions                    []CrossBorderRegion
+	SharedIdentityComplete     bool
+	SharedIdentityChecked      bool
 }

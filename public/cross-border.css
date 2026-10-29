@@ -1,5 +1,5 @@
 /* Border evidence uses the existing theme/customizer tokens. */
-.cb-page { max-width: 1440px; margin: auto; padding: 20px; color: var(--text); }
+.cb-page { max-width: 1440px; margin: auto; padding: 20px; color: var(--text); font-family: var(--font); }
 .cb-page h1 { margin: 4px 0; font-size: 28px; }
 .cb-page h2 { margin: 22px 0 8px; font-size: 19px; }
 .cb-page h3 { margin: 0 0 10px; font-size: 15px; }
@@ -52,6 +52,60 @@
 .cb-evidence-sources { margin-top: 16px; }
 .cb-evidence-sources ul { list-style: none; padding: 0; margin: 0; }
 .cb-evidence-sources li { white-space: pre-line; font-size: 12px; line-height: 1.7; padding: 10px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.cb-live-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.cb-live-controls label { display: flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 12px; }
+.cb-live-controls input { min-height: 0; width: 17px; height: 17px; accent-color: var(--accent); }
+.cb-page > .cb-sources { gap: 12px; }
+.cb-page > .cb-sources .cb-source { border: 0; border-left: 3px solid var(--accent); padding: 8px 12px; background: var(--section-bg); }
+.cb-page > .cb-sources .cb-source h2 { font-size: 13px; margin-bottom: 4px; }
+.cb-page > .cb-sources .cb-source p { font-size: 12px; }
+.cb-overview-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 22px 0 8px; }
+.cb-overview-metrics > div { min-width: 0; }
+.cb-overview-metrics span, .cb-overview-metrics small { display: block; color: var(--text-muted); font-size: 12px; }
+.cb-overview-metrics strong { display: block; font-size: 32px; line-height: 1.35; font-weight: 700; }
+.cb-overview-metrics small { margin-top: 3px; overflow-wrap: anywhere; }
+.cb-dashboard-section { margin-top: 30px; }
+.cb-dashboard-section > h2, .cb-dashboard-section .cb-header h2 { font-size: 22px; margin: 0 0 7px; }
+.cb-section-intro { color: var(--text-muted); font-size: 14px; margin: 0 0 16px; }
+.cb-chart-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+.cb-visual { min-width: 0; padding: 18px; background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.cb-visual h3 { margin: 0 0 8px; font-size: 15px; }
+.cb-visual > h2 { font-size: 20px; }
+.cb-chart { position: relative; width: 100%; height: 205px; }
+.cb-chart canvas { width: 100%; height: 100%; }
+.cb-chart-values { margin-top: 12px; border-top: 1px solid var(--border); }
+.cb-chart-values p { font-size: 12px; line-height: 1.65; margin: 9px 0 0; overflow-wrap: anywhere; }
+.cb-chart-help { margin-top: 10px; font-size: 12px; color: var(--text-muted); }
+.cb-chart-help summary { padding: 6px 0; cursor: pointer; color: var(--link-color); }
+.cb-chart-help p { max-width: 100ch; }
+.cb-chart-help .cb-table-scroll { margin-top: 10px; max-height: 350px; }
+.cb-trend-table, .cb-carry-table, .cb-region-table { border-collapse: collapse; width: 100%; background: var(--card-bg); font-size: 12px; }
+.cb-trend-table caption, .cb-carry-table caption, .cb-region-table caption { padding: 10px; text-align: left; color: var(--text-muted); font-size: 12px; }
+.cb-trend-table th, .cb-trend-table td, .cb-carry-table th, .cb-carry-table td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.cb-trend-table th, .cb-carry-table th { background: var(--section-bg); font-weight: 600; }
+.cb-region-grid { overflow: auto; max-width: 100%; }
+.cb-region-table { table-layout: fixed; min-width: 290px; }
+.cb-region-table th { font-weight: 500; padding: 9px 5px; overflow-wrap: anywhere; }
+.cb-region-table th:first-child { width: 115px; }
+.cb-region-table td { padding: 3px; }
+.cb-region-table button { width: 100%; min-width: 44px; min-height: 44px; border: 1px solid var(--border); background: color-mix(in srgb, var(--accent) var(--cb-cell-strength), var(--card-bg)); color: var(--text); font-weight: 600; }
+.cb-region-table button:hover { outline: 2px solid var(--accent); background: var(--row-hover); }
+.cb-radio-ranking p { margin: 0; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 12px; white-space: pre-line; overflow-wrap: anywhere; }
+.cb-radio-ranking p:last-child { border-bottom: 0; }
+.cb-radio-ranking { max-height: 350px; overflow-y: auto; }
+.cb-carry-table { min-width: 970px; table-layout: fixed; }
+.cb-carry-table th:first-child { width: 190px; }
+.cb-carry-table th:nth-child(2) { width: 85px; }
+.cb-carry-table td { overflow-wrap: anywhere; line-height: 1.5; }
+.cb-carry-table td[data-evidence="Observed"] { color: var(--success); font-weight: 600; }
+.cb-carry-table td[data-evidence="Ambiguous"] { color: var(--text-muted); font-style: italic; }
+.cb-carry-table td button { text-align: left; max-width: 100%; padding: 0; min-height: 44px; color: var(--link-color); border: 0; background: transparent; white-space: pre-line; overflow-wrap: anywhere; }
+.cb-search-label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; min-width: 230px; }
+.cb-page-controls { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding-top: 12px; font-size: 12px; }
+.cb-page-controls button:disabled { opacity: .5; cursor: default; }
+#cb-repeater-facts { white-space: pre-line; }
+.cb-evidence-disclosure { margin-top: 32px; border-top: 1px solid var(--border); }
+.cb-evidence-disclosure > summary { padding: 18px 0; font-size: 15px; cursor: pointer; color: var(--link-color); }
 @media (max-width: 1000px) {
   .cb-scroll-hint { display: block; }
   .cb-filters { grid-template-columns: 1fr 1fr; }
@@ -65,4 +119,18 @@
   .cb-summary > div { min-width: 0; padding: 10px; overflow-wrap: anywhere; }
   .cb-summary dd { font-size: 21px; }
   .cb-detail { padding: 12px; }
+  .cb-filters { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .cb-filters > button { grid-column: 1 / -1; width: 100%; }
+  .cb-page > .cb-sources { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .cb-page > .cb-sources .cb-source { padding: 8px; }
+  .cb-page > .cb-sources .cb-source p { font-size: 11px; }
+  .cb-chart-pair { grid-template-columns: 1fr; gap: 14px; }
+  .cb-visual { padding: 12px; }
+  .cb-overview-metrics { gap: 10px; }
+  .cb-overview-metrics strong { font-size: 27px; }
+  .cb-overview-metrics span, .cb-overview-metrics small { font-size: 11px; }
+  .cb-live-controls { gap: 9px; width: 100%; justify-content: space-between; }
+  .cb-search-label { width: 100%; min-width: 0; }
+  .cb-dashboard-section > h2, .cb-dashboard-section .cb-header h2 { font-size: 20px; }
+  .cb-section-intro { font-size: 13px; }
 }

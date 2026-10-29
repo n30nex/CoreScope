@@ -192,6 +192,10 @@ func (db *DB) crossBorderObserverJoin() string {
 }
 
 func (db *DB) readCrossBorder(ctx context.Context, iatas []string, since, until time.Time, cfg CrossBorderConfig, hashes []string) (crossBorderSnapshot, error) {
+	return db.readCrossBorderData(ctx, iatas, since, until, cfg, hashes, hashes == nil)
+}
+
+func (db *DB) readCrossBorderData(ctx context.Context, iatas []string, since, until time.Time, cfg CrossBorderConfig, hashes []string, readNodes bool) (crossBorderSnapshot, error) {
 	snapshot := crossBorderSnapshot{Observers: []CrossBorderObserver{}, Nodes: []crossBorderNode{}, Observations: []crossBorderObservationRow{}, Regions: []CrossBorderRegion{}}
 	if err := ctx.Err(); err != nil {
 		return snapshot, err
@@ -334,7 +338,7 @@ func (db *DB) readCrossBorder(ctx context.Context, iatas []string, since, until 
 			var row crossBorderObservationRow
 			var scope sql.NullString
 			var snr, rssi sql.NullFloat64
-			if err = rows.Scan(&row.Hash, &row.ObserverID, &row.Direction, &row.Timestamp, &row.PayloadType, &row.RouteType, &scope, &snr, &rssi, &row.RawHex, &row.RawHexLength, &row.CanonicalRawHex, &row.FromPubkey); err != nil {
+			if err = rows.Scan(&row.Hash, &row.ObserverID, &row.Direction, &row.Timestamp, &row.PayloadType, &row.RouteType, &scope, &snr, &rssi, &row.RawHex, &row.RawHexLength, &row.CanonicalRawHex, &row.FromPubkey, &row.ObserverIATA); err != nil {
 				rows.Close()
 				return snapshot, err
 			}
@@ -349,7 +353,7 @@ func (db *DB) readCrossBorder(ctx context.Context, iatas []string, since, until 
 		}
 		rows.Close()
 	}
-	if hashes == nil {
+	if readNodes {
 		if err = db.readCrossBorderNodes(ctx, cfg, &snapshot); err != nil {
 			return snapshot, err
 		}
@@ -379,19 +383,32 @@ func (db *DB) crossBorderObservationQuery(iatas []string, since, until time.Time
 		rawLen = "length(COALESCE(o.raw_hex,''))"
 	}
 	args = append(args, cfg.ObservationLimit+1)
-	query := `SELECT t.hash,ob.id,COALESCE(o.direction,''),o.timestamp,COALESCE(t.payload_type,0),COALESCE(t.route_type,0),` + scope + `,o.snr,o.rssi,` + raw + `,` + rawLen + `,substr(COALESCE(t.raw_hex,''),1,12),COALESCE(t.from_pubkey,'')
+	query := `SELECT t.hash,ob.id,COALESCE(o.direction,''),o.timestamp,COALESCE(t.payload_type,0),COALESCE(t.route_type,0),` + scope + `,o.snr,o.rssi,` + raw + `,` + rawLen + `,substr(COALESCE(t.raw_hex,''),1,12),COALESCE(t.from_pubkey,''),UPPER(TRIM(COALESCE(ob.iata,'')))
  FROM observations o JOIN transmissions t ON t.id=o.transmission_id ` + db.crossBorderObserverJoin() + ` WHERE ` + strings.Join(where, " AND ") + ` ORDER BY o.timestamp DESC,o.id DESC LIMIT ` + db.parameter(len(args))
 	return query, args
 }
 
 func (db *DB) readCrossBorderNodes(ctx context.Context, cfg CrossBorderConfig, snapshot *crossBorderSnapshot) error {
+	return db.readCrossBorderNodesForKeys(ctx, cfg, snapshot, nil)
+}
+
+func (db *DB) readCrossBorderNodesForKeys(ctx context.Context, cfg CrossBorderConfig, snapshot *crossBorderSnapshot, keys []string) error {
 	scope, scopeAt, truncated := "NULL", "NULL", "0"
 	if db.hasConfiguredScope {
 		scope = "substr(configured_scope,1,4096)"
 		scopeAt = "configured_scope_at"
 		truncated = "CASE WHEN length(configured_scope)>4096 THEN 1 ELSE 0 END"
 	}
-	rows, err := db.conn.QueryContext(ctx, `SELECT public_key,substr(COALESCE(name,''),1,256),COALESCE(role,''),last_seen,lat,lon,`+scope+`,`+scopeAt+`,`+truncated+` FROM nodes ORDER BY last_seen DESC NULLS LAST,public_key LIMIT `+db.parameter(1), cfg.MetadataLimit+1)
+	args := []any{}
+	where := "1=1"
+	if keys != nil {
+		if len(keys) == 0 {
+			return nil
+		}
+		where = crossBorderIn(db, "LOWER(public_key)", keys, &args)
+	}
+	args = append(args, cfg.MetadataLimit+1)
+	rows, err := db.conn.QueryContext(ctx, `SELECT public_key,substr(COALESCE(name,''),1,256),COALESCE(role,''),last_seen,lat,lon,`+scope+`,`+scopeAt+`,`+truncated+` FROM nodes WHERE `+where+` ORDER BY last_seen DESC NULLS LAST,public_key LIMIT `+db.parameter(len(args)), args...)
 	if err != nil {
 		return err
 	}
@@ -427,15 +444,15 @@ func (db *DB) readCrossBorderNodes(ctx context.Context, cfg CrossBorderConfig, s
 	if !db.hasDeclaredRegionsTable || len(snapshot.Nodes) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(snapshot.Nodes))
+	keys = make([]string, 0, len(snapshot.Nodes))
 	byKey := map[string]int{}
 	for i, n := range snapshot.Nodes {
 		key := crossBorderID(n.PublicKey)
 		keys = append(keys, key)
 		byKey[key] = i
 	}
-	args := []any{}
-	where := crossBorderIn(db, "LOWER(target)", keys, &args)
+	args = []any{}
+	where = crossBorderIn(db, "LOWER(target)", keys, &args)
 	args = append(args, cfg.MetadataLimit+1)
 	rows, err = db.conn.QueryContext(ctx, `WITH ranked AS (
  SELECT target,observed_at,substr(regions_csv,1,4096) AS regions_csv,CASE WHEN length(regions_csv)>4096 THEN 1 ELSE truncated END AS truncated,

@@ -1131,7 +1131,7 @@ registerPage('tools-landing', {
         '<div class="tools-menu">' +
           '<a href="#/tools/path-inspector" class="tools-card"><h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-magnifying-glass"/></svg> Path Inspector</h3><p>Resolve prefix paths to candidate full-pubkey routes with confidence scoring.</p></a>' +
           '<a href="#/tools/trace/" class="tools-card"><h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-broadcast"/></svg> Trace Viewer</h3><p>View detailed packet traces by hash.</p></a>' +
-          '<a href="#/cross-border" class="tools-card"><h3>Border links</h3><p>Compare peer telemetry with Canadian reference observations, including scope reports and packet overlap evidence.</p></a>' +
+          '<a href="#/cross-border" class="tools-card"><h3>Border links</h3><p>Compare path-width adoption, scopes, regional matches and radio airtime with live charts and repeater evidence.</p></a>' +
         '</div>' +
       '</div>';
   },
