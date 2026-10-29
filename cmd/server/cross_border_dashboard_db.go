@@ -146,7 +146,7 @@ func (db *DB) readCrossBorderDashboard(ctx context.Context, regions []string, f 
 		return crossBorderSnapshot{}, nil, false, errCrossBorderUnavailable
 	}
 	since := now.Add(-time.Duration(f.WindowMinutes) * time.Minute)
-	snapshot, err := db.readCrossBorderData(ctx, regions, since, now, cfg, nil, false)
+	snapshot, err := db.readCrossBorderDataSelected(ctx, regions, since, now, cfg, nil, false, true)
 	if err != nil {
 		return snapshot, nil, false, err
 	}
@@ -438,7 +438,8 @@ func (db *DB) readCrossBorderDashboardMetrics(ctx context.Context, regions []str
 		return "NULL"
 	}
 	args := []any{since.UTC().Format(time.RFC3339), crossBorderMetricsCutoff(now).UTC().Format(time.RFC3339)}
-	where := crossBorderIn(db, "UPPER(TRIM(COALESCE(ob.iata,'')))", regions, &args)
+	where := db.crossBorderObserverWhere(regions, snapshot.DashboardObserverSelection, "ob.rowid", &args)
+	selectedIATA := crossBorderSelectionIATAs(snapshot.DashboardObserverSelection)
 	observerCols, err := schemaColumns(ctx, db.conn, "observers", db.Backend())
 	if err != nil {
 		return err
@@ -448,7 +449,7 @@ func (db *DB) readCrossBorderDashboardMetrics(ctx context.Context, regions []str
 		relay = "CASE WHEN ob.can_relay_seen=1 THEN ob.can_relay ELSE NULL END"
 	}
 	query := `SELECT ob.id,substr(COALESCE(ob.name,''),1,256),UPPER(TRIM(COALESCE(ob.iata,''))),` + relay + `,m.timestamp,` + column("tx_air_secs") + `,` + column("rx_air_secs") + `,` + column("recv_errors") + `,` + column("packets_sent") + `,` + column("packets_recv") + ` FROM observer_metrics m JOIN observers ob ON ob.id=m.observer_id WHERE m.timestamp >= ` + db.parameter(1) + ` AND m.timestamp <= ` + db.parameter(2) + ` AND ` + where + ` ORDER BY m.timestamp DESC,ob.id LIMIT ` + fmt.Sprint(crossBorderDashboardMetrics+1)
-	rows, err := db.conn.QueryContext(ctx, query, args...)
+	rows, err := db.conn.QueryContext(ctx, query, db.crossBorderSelectionArgs(args, snapshot.DashboardObserverSelection)...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -467,6 +468,11 @@ func (db *DB) readCrossBorderDashboardMetrics(ctx context.Context, regions []str
 		var relayValue, tx, rx, recv, sent, packets sql.NullInt64
 		if err = rows.Scan(&row.Observer.ID, &row.Observer.Name, &row.Observer.IATA, &relayValue, &row.Sample.Timestamp, &tx, &rx, &recv, &sent, &packets); err != nil {
 			return err
+		}
+		var selected bool
+		row.Observer.IATA, selected = crossBorderSelectedIATA(selectedIATA, row.Observer.ID, row.Observer.IATA)
+		if !selected {
+			return errCrossBorderUnavailable
 		}
 		if hidden[crossBorderID(row.Observer.ID)] || (cfg != nil && cfg.IsBlacklisted(row.Observer.ID)) {
 			continue

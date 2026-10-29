@@ -196,6 +196,10 @@ func (db *DB) readCrossBorder(ctx context.Context, iatas []string, since, until 
 }
 
 func (db *DB) readCrossBorderData(ctx context.Context, iatas []string, since, until time.Time, cfg CrossBorderConfig, hashes []string, readNodes bool) (crossBorderSnapshot, error) {
+	return db.readCrossBorderDataSelected(ctx, iatas, since, until, cfg, hashes, readNodes, false)
+}
+
+func (db *DB) readCrossBorderDataSelected(ctx context.Context, iatas []string, since, until time.Time, cfg CrossBorderConfig, hashes []string, readNodes, dashboard bool) (crossBorderSnapshot, error) {
 	snapshot := crossBorderSnapshot{Observers: []CrossBorderObserver{}, Nodes: []crossBorderNode{}, Observations: []crossBorderObservationRow{}, Regions: []CrossBorderRegion{}}
 	if err := ctx.Err(); err != nil {
 		return snapshot, err
@@ -218,10 +222,14 @@ func (db *DB) readCrossBorderData(ctx context.Context, iatas []string, since, un
 	if cols["can_relay"] && cols["can_relay_seen"] {
 		relay = "CASE WHEN ob.can_relay_seen=1 THEN ob.can_relay ELSE NULL END"
 	}
+	rowID := "NULL"
+	if db.isV3 && cols["rowid"] {
+		rowID = "ob.rowid"
+	}
 	args := []any{}
 	where := crossBorderIn(db, "UPPER(TRIM(COALESCE(ob.iata,'')))", iatas, &args)
 	args = append(args, cfg.MetadataLimit+1)
-	rows, err := db.conn.QueryContext(ctx, `SELECT ob.id,substr(COALESCE(ob.name,''),1,256),COALESCE(ob.iata,''),ob.last_seen,`+radio+`,`+relay+`,n.lat,n.lon
+	rows, err := db.conn.QueryContext(ctx, `SELECT ob.id,substr(COALESCE(ob.name,''),1,256),COALESCE(ob.iata,''),ob.last_seen,`+radio+`,`+relay+`,n.lat,n.lon,`+rowID+`
  FROM observers ob LEFT JOIN nodes n ON n.public_key=LOWER(ob.id) WHERE `+where+` ORDER BY ob.id LIMIT `+db.parameter(len(args)), args...)
 	if err != nil {
 		return snapshot, err
@@ -233,9 +241,9 @@ func (db *DB) readCrossBorderData(ctx context.Context, iatas []string, since, un
 		}
 		var o CrossBorderObserver
 		var seen, hardware sql.NullString
-		var canRelay sql.NullInt64
+		var canRelay, observerRowID sql.NullInt64
 		var lat, lon sql.NullFloat64
-		if err = rows.Scan(&o.ID, &o.Name, &o.IATA, &seen, &hardware, &canRelay, &lat, &lon); err != nil {
+		if err = rows.Scan(&o.ID, &o.Name, &o.IATA, &seen, &hardware, &canRelay, &lat, &lon, &observerRowID); err != nil {
 			rows.Close()
 			return snapshot, err
 		}
@@ -248,12 +256,21 @@ func (db *DB) readCrossBorderData(ctx context.Context, iatas []string, since, un
 		}
 		o.Location = crossBorderLocation(crossBorderNumber(lat), crossBorderNumber(lon))
 		snapshot.Observers = append(snapshot.Observers, o)
+		if observerRowID.Valid {
+			snapshot.SelectedObserverRows = append(snapshot.SelectedObserverRows, crossBorderSelectedObserver{RowID: observerRowID.Int64, ID: o.ID, IATA: o.IATA})
+		}
 	}
 	if err = rows.Err(); err != nil {
 		rows.Close()
 		return snapshot, err
 	}
 	rows.Close()
+	// Capture completeness before unrelated region-option caps can set the
+	// display truncation flag. Never optimize from only the first 500 observers.
+	snapshot.ObserverSelectionComplete = rowID != "NULL" && !snapshot.ObserversTruncated && len(snapshot.SelectedObserverRows) == len(snapshot.Observers)
+	selection := db.crossBorderDashboardObserverSelection(snapshot, dashboard)
+	snapshot.DashboardObserverSelection = selection
+	selectedIATA := crossBorderSelectionIATAs(selection)
 	// Options come from known metadata, not inferred nationalities. The local
 	// list is constrained to the explicit operator-maintained allowlist.
 	args = []any{}
@@ -286,12 +303,21 @@ func (db *DB) readCrossBorderData(ctx context.Context, iatas []string, since, un
 		return snapshot, err
 	}
 	rows.Close()
+	if selection != nil && len(selection) == 0 {
+		if readNodes {
+			if err = db.readCrossBorderNodes(ctx, cfg, &snapshot); err != nil {
+				return snapshot, err
+			}
+		}
+		snapshot.Available = true
+		return snapshot, nil
+	}
 	args = []any{}
-	where = crossBorderIn(db, "UPPER(TRIM(COALESCE(ob.iata,'')))", iatas, &args)
+	where = db.crossBorderObserverWhere(iatas, selection, "o.observer_idx", &args)
 	args = append(args, until.Unix())
 	timeBound := "o.timestamp <= " + db.parameter(len(args))
 	var oldest sql.NullInt64
-	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND `+timeBound+` ORDER BY o.timestamp ASC LIMIT 1`, args...).Scan(&oldest)
+	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND `+timeBound+` ORDER BY o.timestamp ASC LIMIT 1`, db.crossBorderSelectionArgs(args, selection)...).Scan(&oldest)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return snapshot, err
 	}
@@ -302,7 +328,7 @@ func (db *DB) readCrossBorderData(ctx context.Context, iatas []string, since, un
 	// Source freshness is selected-feed activity, independent of matching peer
 	// hashes. Zero overlap must not make a fresh reference look disconnected.
 	var latest sql.NullInt64
-	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND `+timeBound+` ORDER BY o.timestamp DESC LIMIT 1`, args...).Scan(&latest)
+	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND `+timeBound+` ORDER BY o.timestamp DESC LIMIT 1`, db.crossBorderSelectionArgs(args, selection)...).Scan(&latest)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return snapshot, err
 	}
@@ -313,7 +339,7 @@ func (db *DB) readCrossBorderData(ctx context.Context, iatas []string, since, un
 	// A row after the report cutoff may be concurrent ingestion, or a clock
 	// disagreement. Keep it explicit without treating it as zero-age evidence.
 	var after sql.NullInt64
-	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND o.timestamp > `+db.parameter(len(args))+` ORDER BY o.timestamp DESC LIMIT 1`, args...).Scan(&after)
+	err = db.conn.QueryRowContext(ctx, `SELECT o.timestamp FROM observations o `+db.crossBorderObserverJoin()+` WHERE `+where+` AND o.timestamp > `+db.parameter(len(args))+` ORDER BY o.timestamp DESC LIMIT 1`, db.crossBorderSelectionArgs(args, selection)...).Scan(&after)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return snapshot, err
 	}
@@ -322,7 +348,7 @@ func (db *DB) readCrossBorderData(ctx context.Context, iatas []string, since, un
 		snapshot.LatestAfterSnapshotAt = &s
 	}
 	if hashes == nil || len(hashes) > 0 {
-		query, args := db.crossBorderObservationQuery(iatas, since, until, cfg, hashes)
+		query, args := db.crossBorderObservationQuerySelected(iatas, since, until, cfg, hashes, selection)
 		// Candidate counts vary between reports. Reuse the existing uncached
 		// pgx execution mode instead of filling the main pool's statement cache
 		// with many large IN-list shapes. SQLite receives ordinary arguments.
@@ -343,6 +369,12 @@ func (db *DB) readCrossBorderData(ctx context.Context, iatas []string, since, un
 				return snapshot, err
 			}
 			row.ScopeName = nullStrPtr(scope)
+			var selected bool
+			row.ObserverIATA, selected = crossBorderSelectedIATA(selectedIATA, row.ObserverID, row.ObserverIATA)
+			if !selected {
+				rows.Close()
+				return snapshot, errCrossBorderUnavailable
+			}
 			row.SNR = crossBorderNumber(snr)
 			row.RSSI = crossBorderNumber(rssi)
 			snapshot.Observations = append(snapshot.Observations, row)
@@ -367,8 +399,12 @@ func (db *DB) readCrossBorderData(ctx context.Context, iatas []string, since, un
 // displace matching reference evidence. ORDER BY uses the observation-time
 // index; hash/transmission and observer joins use their existing keys.
 func (db *DB) crossBorderObservationQuery(iatas []string, since, until time.Time, cfg CrossBorderConfig, hashes []string) (string, []any) {
+	return db.crossBorderObservationQuerySelected(iatas, since, until, cfg, hashes, nil)
+}
+
+func (db *DB) crossBorderObservationQuerySelected(iatas []string, since, until time.Time, cfg CrossBorderConfig, hashes []string, selection []crossBorderSelectedObserver) (string, []any) {
 	args := []any{since.Unix(), until.Unix()}
-	where := []string{"o.timestamp >= " + db.parameter(1), "o.timestamp <= " + db.parameter(2), crossBorderIn(db, "UPPER(TRIM(COALESCE(ob.iata,'')))", iatas, &args)}
+	where := []string{"o.timestamp >= " + db.parameter(1), "o.timestamp <= " + db.parameter(2), db.crossBorderObserverWhere(iatas, selection, "o.observer_idx", &args)}
 	if hashes != nil {
 		where = append(where, crossBorderIn(db, "t.hash", hashes, &args))
 	}

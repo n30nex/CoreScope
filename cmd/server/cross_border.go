@@ -233,6 +233,9 @@ type crossBorderNode struct {
 }
 
 type crossBorderSnapshot struct {
+	SelectedObserverRows       []crossBorderSelectedObserver
+	ObserverSelectionComplete  bool
+	DashboardObserverSelection []crossBorderSelectedObserver
 	DashboardNodes             []crossBorderNodeIdentity
 	DashboardNodeIndexComplete bool
 	DashboardMetrics           []crossBorderMetricRow
@@ -253,4 +256,11 @@ type crossBorderSnapshot struct {
 	Regions                    []CrossBorderRegion
 	SharedIdentityComplete     bool
 	SharedIdentityChecked      bool
+}
+
+// Selection row IDs belong to the private query snapshot, never the API model.
+type crossBorderSelectedObserver struct {
+	RowID int64
+	ID    string
+	IATA  string
 }
