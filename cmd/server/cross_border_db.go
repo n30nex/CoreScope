@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/meshcore-analyzer/dbconfig"
+	"github.com/meshcore-analyzer/dbschema"
 	"github.com/meshcore-analyzer/pgutil"
 )
 
@@ -23,6 +24,17 @@ func (svc *crossBorderService) peerReader(ctx context.Context) (*DB, error) {
 		if svc.peer != nil {
 			db := svc.peer
 			svc.peerMu.Unlock()
+			// A warm connection is not proof the peer is still import-ready.
+			// Runtime peers are PostgreSQL; SQLite is used only by the native
+			// SQL-fixture matrix. Keep a failed warm pool for readiness recovery.
+			if db.Backend() == dbconfig.Postgres {
+				if err := dbschema.AssertReadyContext(ctx, db.conn); err != nil {
+					if ctx.Err() != nil {
+						return nil, ctx.Err()
+					}
+					return nil, errCrossBorderUnavailable
+				}
+			}
 			return db, nil
 		}
 		if waiting := svc.peerOpening; waiting != nil {
@@ -120,13 +132,11 @@ func openCrossBorderPeer(ctx context.Context, local *DB, dsn string, cfg CrossBo
 			return nil, errCrossBorderUnavailable
 		}
 	}
-	db := &DB{conn: conn, path: dsn, backend: dbconfig.Postgres}
-	if err = db.detectSchema(ctx, conn); err != nil {
+	if err = dbschema.AssertReadyContext(ctx, conn); err != nil {
 		return nil, errCrossBorderUnavailable
 	}
-	// Do not latch empty/half-installed schemas. A later request can retry
-	// after the ingestor's offline bootstrap has completed.
-	if !db.isV3 || !db.hasObsRawHex {
+	db := &DB{conn: conn, path: dsn, backend: dbconfig.Postgres}
+	if err = db.detectSchema(ctx, conn); err != nil {
 		return nil, errCrossBorderUnavailable
 	}
 	ok = true

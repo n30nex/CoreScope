@@ -62,12 +62,18 @@ func TestCrossBorderNativeQueryDeadline(t *testing.T) {
 }
 
 func TestCrossBorderNativeServiceKeepsMainDataIsolated(t *testing.T) {
-	local, peer := crossBorderFixture(t), crossBorderFixture(t)
+	local := crossBorderFixture(t)
+	var peer *DB
+	if testBackend(t) == dbconfig.Postgres {
+		peer, _ = crossBorderReadyPostgresFixture(t)
+	} else {
+		peer = crossBorderFixture(t)
+	}
 	now := time.Now().Unix()
 	crossBorderExec(t, local, `INSERT INTO observers(rowid,id,iata) VALUES (1,'local','AAA'),(2,'mirrored','CCC')`)
 	crossBorderExec(t, peer, `INSERT INTO observers(rowid,id,iata) VALUES (1,'peer','BBB'),(2,'mirrored','BBB')`)
 	crossBorderExec(t, local, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type) VALUES (1,'local-only','1500ff',1,5)`)
-	crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,decoded_json) VALUES (1,'peer-only','1500ff',1,5,'private-decrypted-sentinel')`)
+	crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,decoded_json,first_seen) VALUES (1,'peer-only','1500ff',1,5,'private-decrypted-sentinel',$1)`, crossBorderTime(now))
 	crossBorderExec(t, local, `INSERT INTO observations(transmission_id,observer_idx,timestamp,direction,raw_hex) VALUES(1,1,$1,'rx','1500ff')`, now)
 	crossBorderExec(t, peer, `INSERT INTO observations(transmission_id,observer_idx,timestamp,direction,raw_hex) VALUES(1,1,$1,'rx','1500ff'),(1,2,$1,'rx','1500ff')`, now)
 	cfg := crossBorderTestConfig()
@@ -109,8 +115,8 @@ func TestCrossBorderNativeServiceKeepsMainDataIsolated(t *testing.T) {
 func TestCrossBorderPeerPoolReadOnlyAndSeparateDatabase(t *testing.T) {
 	postgresOnly(t)
 	local := crossBorderFixture(t)
-	ownerURL := pgtest.NewDatabase(t)
-	owner := setupTestDBAtURL(t, ownerURL).conn
+	ownerDB, ownerURL := crossBorderReadyPostgresFixture(t)
+	owner := ownerDB.conn
 	readerURL := pgtest.ReadOnly(t, ownerURL)
 	cfg := crossBorderTestConfig()
 	peer, err := openCrossBorderPeer(context.Background(), local, readerURL, cfg)
