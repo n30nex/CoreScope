@@ -127,6 +127,7 @@
     if (slash >= 0) h = h.substring(0, slash);
     var q = h.indexOf('?');
     if (q >= 0) h = h.substring(0, q);
+    if (h === 'cross-border') return 'tools';
     return h || 'packets';
   }
 

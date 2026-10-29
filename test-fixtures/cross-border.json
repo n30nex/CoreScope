@@ -1,0 +1,375 @@
+{
+  "enabled": true,
+  "status": "ready",
+  "generatedAt": "2026-10-28T20:00:00Z",
+  "filters": {
+    "localIata": [
+      "AAA"
+    ],
+    "peerIata": [
+      "BBB"
+    ],
+    "scope": "all",
+    "windowMinutes": 60
+  },
+  "sources": {
+    "local": {
+      "label": "Local reference",
+      "status": "available",
+      "selectionIata": [
+        "AAA"
+      ],
+      "oldestStoredObservationAt": "2026-10-27T12:00:00Z",
+      "latestObservationAt": "2026-10-28T19:59:10Z",
+      "ageSeconds": 50,
+      "rowsRead": 2,
+      "excludedTxObservations": 0,
+      "unknownDirectionObservations": 0,
+      "observationsTruncated": false,
+      "observersTruncated": false,
+      "nodesTruncated": false,
+      "referenceProfile": null,
+      "excludedInvalidObservations": 0
+    },
+    "peer": {
+      "label": "Peer telemetry",
+      "status": "available",
+      "selectionIata": [
+        "BBB"
+      ],
+      "oldestStoredObservationAt": "2026-10-28T18:00:00Z",
+      "latestObservationAt": "2026-10-28T19:59:00Z",
+      "ageSeconds": 60,
+      "rowsRead": 3,
+      "excludedTxObservations": 0,
+      "unknownDirectionObservations": 1,
+      "observationsTruncated": false,
+      "observersTruncated": false,
+      "nodesTruncated": false,
+      "referenceProfile": {
+        "label": "Example community recommendation",
+        "url": "https://example.org/radio-profile",
+        "frequencyMHz": 910.525,
+        "bandwidthKHz": 62.5,
+        "spreadingFactor": 7,
+        "codingRate": 8,
+        "hopWidthBytes": 2
+      },
+      "excludedInvalidObservations": 0
+    }
+  },
+  "options": {
+    "localRegions": [
+      {
+        "iata": "AAA",
+        "label": "AAA",
+        "observers": 2
+      }
+    ],
+    "peerRegions": [
+      {
+        "iata": "BBB",
+        "label": "BBB",
+        "observers": 2
+      }
+    ],
+    "scopes": [
+      {
+        "value": "all",
+        "label": "All scopes"
+      },
+      {
+        "value": "unscoped",
+        "label": "Unscoped"
+      },
+      {
+        "value": "unknown",
+        "label": "Unknown scope"
+      },
+      {
+        "value": "example",
+        "label": "example"
+      }
+    ],
+    "windowMinutes": [
+      15,
+      60,
+      180,
+      360
+    ]
+  },
+  "limits": {
+    "observationRows": 5000,
+    "metadataRows": 500,
+    "packetRows": 100,
+    "observationsPerPacket": 8,
+    "cacheSeconds": 30
+  },
+  "completeness": {
+    "complete": true,
+    "packetsTruncated": false,
+    "peerRepeatersTruncated": false
+  },
+  "summary": {
+    "peerPackets": 3,
+    "localReferencePackets": 2,
+    "independentSharedPackets": 1,
+    "sharedObserverOnlyPackets": 1,
+    "notSeenLocallyPackets": 1,
+    "duplicateObserverIds": 1,
+    "identityUnverifiedPackets": 0
+  },
+  "peerObservers": [
+    {
+      "id": "peer-observer",
+      "name": "Peer observer",
+      "iata": "BBB",
+      "sharedIdentity": false,
+      "lastSeenAt": "2026-10-28T19:59:00Z",
+      "reportedCanRelay": true,
+      "canRelayReportedAt": null,
+      "location": {
+        "lat": 44,
+        "lon": -74,
+        "reportedAt": null
+      },
+      "sampleObservations": 2,
+      "unknownDirectionObservations": 1,
+      "hopWidths": [
+        1,
+        2
+      ],
+      "observedScopes": [
+        {
+          "kind": "named",
+          "name": "example"
+        },
+        {
+          "kind": "unscoped",
+          "name": null
+        }
+      ],
+      "latestReportedRadioHardware": "SX1262",
+      "radioHardwareReportedAt": null
+    },
+    {
+      "id": "shared-observer",
+      "name": "Shared observer",
+      "iata": "BBB",
+      "sharedIdentity": true,
+      "lastSeenAt": "2026-10-28T19:58:00Z",
+      "reportedCanRelay": null,
+      "canRelayReportedAt": null,
+      "location": null,
+      "sampleObservations": 1,
+      "unknownDirectionObservations": 0,
+      "hopWidths": [
+        1
+      ],
+      "observedScopes": [
+        {
+          "kind": "unknown",
+          "name": null
+        }
+      ],
+      "latestReportedRadioHardware": null,
+      "radioHardwareReportedAt": null
+    }
+  ],
+  "peerRepeaters": [
+    {
+      "publicKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "name": "Example repeater",
+      "role": "repeater",
+      "lastSeenAt": "2026-10-28T19:50:00Z",
+      "location": {
+        "lat": 44,
+        "lon": -74,
+        "reportedAt": null
+      },
+      "declaredScopes": {
+        "names": [
+          "example"
+        ],
+        "allowsUnscoped": true,
+        "reportedAt": "2026-10-28T19:45:00Z",
+        "truncated": null
+      },
+      "observedScopes": [
+        {
+          "kind": "named",
+          "name": "example"
+        }
+      ],
+      "observedUnscoped": false,
+      "observedUnknownScope": false,
+      "hopWidths": [
+        2
+      ],
+      "sampleForwardedPackets": 1,
+      "lastForwardedAt": "2026-10-28T19:59:00Z"
+    }
+  ],
+  "packets": [
+    {
+      "hash": "1111111111111111",
+      "payloadType": 4,
+      "routeType": 0,
+      "scope": {
+        "kind": "named",
+        "name": "example"
+      },
+      "lastSeenAt": "2026-10-28T19:59:00Z",
+      "overlap": "independent",
+      "peerObservationCount": 1,
+      "localObservationCount": 1,
+      "observationsTruncated": false,
+      "peerObservations": [
+        {
+          "observerId": "peer-observer",
+          "observedAt": "2026-10-28T19:59:00Z",
+          "direction": "rx",
+          "snr": 4.5,
+          "rssi": -94,
+          "hopWidth": 2,
+          "hopCount": 1,
+          "sharedObserver": false,
+          "routeType": 0,
+          "scope": {
+            "kind": "named",
+            "name": "example"
+          }
+        }
+      ],
+      "localObservations": [
+        {
+          "observerId": "local-observer",
+          "observedAt": "2026-10-28T19:59:10Z",
+          "direction": "rx",
+          "snr": 2,
+          "rssi": -99,
+          "hopWidth": 2,
+          "hopCount": 2,
+          "sharedObserver": false,
+          "routeType": 0,
+          "scope": {
+            "kind": "named",
+            "name": "example"
+          }
+        }
+      ]
+    },
+    {
+      "hash": "2222222222222222",
+      "payloadType": 5,
+      "routeType": 1,
+      "scope": {
+        "kind": "unscoped",
+        "name": null
+      },
+      "lastSeenAt": "2026-10-28T19:58:30Z",
+      "overlap": "not_seen_locally",
+      "peerObservationCount": 1,
+      "localObservationCount": 0,
+      "observationsTruncated": false,
+      "peerObservations": [
+        {
+          "observerId": "peer-observer",
+          "observedAt": "2026-10-28T19:58:30Z",
+          "direction": "unknown",
+          "snr": null,
+          "rssi": null,
+          "hopWidth": 1,
+          "hopCount": 0,
+          "sharedObserver": false,
+          "routeType": 1,
+          "scope": {
+            "kind": "unscoped",
+            "name": null
+          }
+        }
+      ],
+      "localObservations": []
+    },
+    {
+      "hash": "3333333333333333",
+      "payloadType": 4,
+      "routeType": 0,
+      "scope": {
+        "kind": "unknown",
+        "name": null
+      },
+      "lastSeenAt": "2026-10-28T19:58:00Z",
+      "overlap": "shared_observer_only",
+      "peerObservationCount": 1,
+      "localObservationCount": 1,
+      "observationsTruncated": false,
+      "peerObservations": [
+        {
+          "observerId": "shared-observer",
+          "observedAt": "2026-10-28T19:58:00Z",
+          "direction": "rx",
+          "snr": 3,
+          "rssi": -100,
+          "hopWidth": 1,
+          "hopCount": 1,
+          "sharedObserver": true,
+          "routeType": 0,
+          "scope": {
+            "kind": "unknown",
+            "name": null
+          }
+        }
+      ],
+      "localObservations": [
+        {
+          "observerId": "shared-observer",
+          "observedAt": "2026-10-28T19:58:00Z",
+          "direction": "rx",
+          "snr": 3,
+          "rssi": -100,
+          "hopWidth": 1,
+          "hopCount": 1,
+          "sharedObserver": true,
+          "routeType": 0,
+          "scope": {
+            "kind": "unknown",
+            "name": null
+          }
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "code": "shared_content_only",
+      "severity": "info",
+      "message": "Shared content in two feeds does not establish an RF route across a border."
+    },
+    {
+      "code": "passive_limits",
+      "severity": "info",
+      "message": "Missing observations are not packet loss or evidence of misconfiguration. SNR describes the listed reception only."
+    },
+    {
+      "code": "reported_radio_hardware_only",
+      "severity": "info",
+      "message": "Radio descriptions identify reported hardware; actual frequency, bandwidth, spreading factor and coding rate are not available."
+    },
+    {
+      "code": "shared_observers",
+      "severity": "warning",
+      "message": "Observers present in both sources are excluded from independent overlap."
+    },
+    {
+      "code": "sample_availability",
+      "severity": "info",
+      "message": "Source status describes query and retained-data availability, not a broker connection. Retained evidence is not proof of continuous collection. Local counts cover peer content candidates only."
+    },
+    {
+      "code": "observer_identity_limit",
+      "severity": "info",
+      "message": "Independent overlap means distinct reported observer IDs in these datasets; it does not verify separate physical devices or independent MQTT delivery."
+    }
+  ]
+}
