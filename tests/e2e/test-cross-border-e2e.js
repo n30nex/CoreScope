@@ -258,6 +258,20 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.strictEqual(await page.locator('#cb-peer-profile a').getAttribute('href'), 'https://example.org/radio-profile');
       assert.match(await page.locator('#cb-peer-profile').textContent(), /not device measurements/);
     });
+    await check('compact desktop controls retain the navigation and visible active tab', async () => {
+      const navigation = await page.locator('.nav-links > .nav-link').evaluateAll(nodes => nodes.map(node => ({route:node.dataset.route, priority:node.dataset.priority})));
+      assert.deepStrictEqual(navigation.filter(node=>node.priority==='high').map(node=>node.route), ['home','packets','map','live','nodes']);
+      assert(navigation.findIndex(node=>node.route==='analytics') < navigation.findIndex(node=>node.route==='tools'), 'Analytics should precede utility pages');
+      assert.strictEqual(await page.locator('.top-nav').evaluate(node=>node.getBoundingClientRect().height), 52);
+      assert(await page.locator('.cb-page h1').evaluate(node=>parseFloat(getComputedStyle(node).fontSize)<=24), 'page heading stays compact');
+      assert(await page.locator('#cb-refresh, #cb-filters > button, .cb-direction-controls button').evaluateAll(nodes=>nodes.every(node=>node.getBoundingClientRect().height>=32&&node.getBoundingClientRect().height<=36)), 'desktop controls stay compact without becoming tiny');
+      assert(await page.locator('#cb-analytics-tabs').evaluate(node => {
+        const selected = node.querySelector('[aria-selected="true"]');
+        const style = getComputedStyle(selected);
+        return parseFloat(style.borderBottomWidth) >= 2 && style.borderBottomColor !== 'rgba(0, 0, 0, 0)' &&
+          Array.from(node.querySelectorAll('[aria-selected="false"]')).every(button => getComputedStyle(button).borderBottomColor !== style.borderBottomColor);
+      }), 'active tab has a distinct underline');
+    });
     await check('first map fit covers the same paths as the fit control', async () => {
       const previousURL = page.url();
       mode='hidden-map-start';
@@ -741,6 +755,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
       await page.setViewportSize({ width: 375, height: 900 });
       await page.goto(BASE + '/#/cross-border'); await ready();
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+      assert(await page.locator('.cb-page button, .cb-page input:not([type="checkbox"]), .cb-page select, .cb-page summary, .cb-live-controls label').evaluateAll(nodes => nodes.filter(node => node.getBoundingClientRect().width && node.getBoundingClientRect().height).every(node => node.getBoundingClientRect().height >= 44)), 'phone controls and disclosure rows retain 44px tap targets');
+      assert(await page.locator('.cb-flow-map-section > .cb-header > div:first-child').evaluate(node => node.getBoundingClientRect().width >= 250), 'phone map title and freshness text must retain a readable column above direction controls');
       assert(await page.locator('[data-bottom-nav-tab="more"]').evaluate(node => node.classList.contains('active')),
         'Border links belongs under Tools, so the mobile More tab must remain active');
       await page.locator('#cb-local-chips button').first().focus(); await page.keyboard.press('Tab');
@@ -769,10 +785,9 @@ const clone = value => JSON.parse(JSON.stringify(value));
         assert.strictEqual(await page.locator('#cb-analytics-tabs [aria-selected="true"]').count(), 1);
         assert(await page.locator('#cb-analytics-tabs').evaluate(node => {
           const selected = node.querySelector('[aria-selected="true"]');
-          const selectedColor = getComputedStyle(selected).backgroundColor;
-          const cardColor = getComputedStyle(document.querySelector('.analytics-card')).backgroundColor;
-          return Array.from(node.querySelectorAll('[aria-selected="false"]')).every(button => getComputedStyle(button).backgroundColor === cardColor && getComputedStyle(button).backgroundColor !== selectedColor);
-        }), 'inactive dark tabs must use the card surface, not an active-looking fill');
+          const selectedColor = getComputedStyle(selected).borderBottomColor;
+          return Array.from(node.querySelectorAll('[aria-selected="false"]')).every(button => getComputedStyle(button).borderBottomColor !== selectedColor);
+        }), 'dark tabs retain a distinct active underline');
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-dark-hashes.png'), fullPage: true });
       }
     });
