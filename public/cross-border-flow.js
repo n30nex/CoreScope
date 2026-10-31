@@ -131,7 +131,7 @@
   };
 
   api.mount = function (root, callbacks) {
-    var response = {}, flow = {}, ui = {}, charts = new Map(), map = null, tiles = null, mapRefTiles = null, paths = [], lines = new Map(), markers = new Map(), fitOnce = false, disposed = false, viewFrame = null, knownPaths = new Set(), hasSnapshot = false, updatingViewport = false;
+    var response = {}, flow = {}, ui = {}, charts = new Map(), map = null, tiles = null, mapRefTiles = null, paths = [], lines = new Map(), markers = new Map(), fitOnce = false, disposed = false, viewFrame = null, knownPaths = new Set(), hasSnapshot = false, updatingViewport = false, newPathCount = 0;
     var mapper = new Map();
     function el(id) { return root.querySelector('#' + id); }
     function palette() { var css = getComputedStyle(root); return ['--accent', '--palette-purple-500', '--success', '--text-muted', '--warning', '--border', '--text'].map(function (key) { return css.getPropertyValue(key).trim(); }); }
@@ -296,6 +296,9 @@
       });existing.forEach(function(row){row.remove();});
       text(el('cb-border-repeaters-count'),shown.length?'Showing '+shown.length+' of '+rows(flow.repeaters).length+' returned repeaters. Scope counts may overlap; a recorded scope does not prove every earlier hop carried it unchanged.':'No resolved crossing repeater evidence in this snapshot.');
     }
+    function renderMapStatus() {
+      text(el('cb-flow-map-status'),(ui.live==='0' ? 'Paused snapshot' : 'Updates every minute')+' · '+stamp(response.generatedAt)+(flow.identityComplete===false?' · Repeater identity coverage incomplete':newPathCount ? ' · '+newPathCount+' newly seen paths' : ''));
+    }
     function update(data, filters) {
       response=data || {};flow=response.dashboard && response.dashboard.flow || {};ui=filters || ui;
       mapper=new Map();rows(response.meshMapper && response.meshMapper.repeaters).slice(0,5000).forEach(function(r){if(typeof r.publicKey==='string' && /^[a-f0-9]{64}$/i.test(r.publicKey))mapper.set(r.publicKey.toLowerCase(),r);});
@@ -303,7 +306,7 @@
       var scopeLimited=scopeLimitMessages(response).length>0;
       text(el('cb-flow-status'),flow.identityComplete===false ? 'Repeater identity coverage is incomplete. Crossing counts and paths cannot be attributed.' : !usable(flow) ? 'Crossing analysis is unavailable. Listener activity remains available in the other views.' : (flow.status==='partial' || scopeLimited ? 'Partial path evidence. ' : '')+amount(flow.eligibleContents)+' eligible packet contents · '+amount(flow.nonCrossingContents)+' with no crossing in resolved paths · '+amount(flow.unresolvedContents)+' with crossing unresolved.'+(scopeLimited?' Scope-name evidence is incomplete.':''));
       var next=new Set(rows(flow.paths).slice(0,MAX_PATHS).map(function(p){return p.id;})),fresh=0;if(hasSnapshot)next.forEach(function(id){if(!knownPaths.has(id))fresh++;});knownPaths=next;hasSnapshot=true;
-      text(el('cb-flow-map-status'),(ui.live==='0' ? 'Paused snapshot' : 'Updates every minute')+' · '+stamp(response.generatedAt)+(flow.identityComplete===false?' · Repeater identity coverage incomplete':fresh ? ' · '+fresh+' newly seen paths' : ''));
+      newPathCount=fresh;renderMapStatus();
       renderCharts();renderSelection();renderCatalog();renderRepeaters();
     }
     function click(event) {
@@ -317,7 +320,7 @@
     }
     function repaint(){if(disposed)return;syncTiles();renderCharts();renderSelection();}
     root.addEventListener('click',click);window.addEventListener('theme-changed',repaint);
-    return {update:update,setView:function(filters){ui=filters;if(ui.tab==null||ui.tab==='overview')refreshMapSize();renderSelection();},resize:function(){if(viewFrame!=null)cancelAnimationFrame(viewFrame);viewFrame=requestAnimationFrame(function(){viewFrame=null;if(disposed)return;if(ui.tab==null||ui.tab==='overview'){refreshMapSize();renderMap();charts.forEach(function(c){c.resize();});}});},destroy:function(){disposed=true;if(viewFrame!=null)cancelAnimationFrame(viewFrame);root.removeEventListener('click',click);window.removeEventListener('theme-changed',repaint);charts.forEach(function(c){c.destroy();});charts.clear();if(map)map.remove();map=null;lines.clear();markers.clear();mapper.clear();knownPaths.clear();}};
+    return {update:update,setView:function(filters){ui=filters;renderMapStatus();if(ui.tab==null||ui.tab==='overview')refreshMapSize();renderSelection();},resize:function(){if(viewFrame!=null)cancelAnimationFrame(viewFrame);viewFrame=requestAnimationFrame(function(){viewFrame=null;if(disposed)return;if(ui.tab==null||ui.tab==='overview'){refreshMapSize();renderMap();charts.forEach(function(c){c.resize();});}});},destroy:function(){disposed=true;if(viewFrame!=null)cancelAnimationFrame(viewFrame);root.removeEventListener('click',click);window.removeEventListener('theme-changed',repaint);charts.forEach(function(c){c.destroy();});charts.clear();if(map)map.remove();map=null;lines.clear();markers.clear();mapper.clear();knownPaths.clear();}};
   };
   window.CrossBorderFlow=api;
 })();

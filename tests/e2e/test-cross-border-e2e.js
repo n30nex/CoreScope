@@ -267,6 +267,17 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert(Math.abs(Number(before.get('lon')) - Number(after.get('lon'))) < 0.001, 'initial fit longitude must cover the same path extent');
       await page.goto(previousURL); await ready();
     });
+    await check('live toggle updates the map status immediately without fetching', async () => {
+      const before = calls.length;
+      await page.locator('#cb-live').uncheck();
+      assert.match(await page.locator('#cb-flow-map-status').innerText(), /Paused snapshot/);
+      await page.locator('[data-direction="us_ca"]').click();
+      assert.match(await page.locator('#cb-flow-map-status').innerText(), /Paused snapshot/);
+      await page.locator('#cb-live').check();
+      assert.match(await page.locator('#cb-flow-map-status').innerText(), /Updates every minute/);
+      assert.strictEqual(calls.length, before, 'changing live preference must not refetch or rebuild the snapshot');
+      await page.locator('[data-direction="both"]').click();
+    });
     await check('crossings lead with direction, scoped shares and an actual Leaflet map', async () => {
       assert.strictEqual(await page.getByRole('tab', {name:'Crossings', exact:true}).getAttribute('aria-selected'), 'true');
       assert.strictEqual(await page.locator('#cb-flow-ca_us-count').innerText(), '2');

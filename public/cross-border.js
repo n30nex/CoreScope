@@ -601,7 +601,7 @@
       if ((state.filters.evidence || '0') === value) return;
       state.filters.evidence = value; setHash(state, false);
     };
-    state.live = function () { state.filters.live = state.el('cb-live').checked ? '1' : '0'; setHash(state, false); schedule(state); };
+    state.live = function () { state.filters.live = state.el('cb-live').checked ? '1' : '0'; setHash(state, false); if (state.dashboard) state.dashboard.setView(state.filters); schedule(state); };
     state.visibility = function () { if (state !== active) return; if (!document.hidden && state.filters.live !== '0' && !state.loading) load(state); else schedule(state); };
     state.el('cb-evidence').addEventListener('toggle', state.toggleEvidence);
     state.el('cb-live').addEventListener('change', state.live);
