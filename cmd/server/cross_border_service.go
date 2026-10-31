@@ -178,6 +178,12 @@ func parseCrossBorderFilters(q url.Values, cfg CrossBorderConfig) (CrossBorderFi
 	if len(q["scope"]) > 1 || len(f.Scope) > 128 || f.Scope == "" || isScopeWildcard(f.Scope) {
 		return f, errors.New("invalid scope")
 	}
+	if strings.HasPrefix(f.Scope, "named:") {
+		name := strings.TrimPrefix(f.Scope, "named:")
+		if name == "" || isScopeWildcard(name) {
+			return f, errors.New("invalid named scope")
+		}
+	}
 	for _, c := range f.Scope {
 		if c < 32 || c == 127 {
 			return f, errors.New("invalid scope")
@@ -191,30 +197,36 @@ type crossBorderCacheEntry struct {
 	At       time.Time
 }
 type crossBorderFlight struct {
-	done     chan struct{}
-	cancel   context.CancelFunc
-	response CrossBorderResponse
-	err      error
+	done             chan struct{}
+	cancel           context.CancelFunc
+	response         CrossBorderResponse
+	err              error
+	metadataRevision uint64
 }
 type crossBorderService struct {
-	cfg         CrossBorderConfig
-	load        func(context.Context, CrossBorderFilters) (CrossBorderResponse, error)
-	mu          sync.Mutex
-	cache       map[string]crossBorderCacheEntry
-	flights     map[string]*crossBorderFlight
-	closed      bool
-	local       *DB
-	serverCfg   *Config
-	peerURL     string
-	peerMu      sync.Mutex
-	peer        *DB
-	peerOpening chan struct{}
-	peerAttempt time.Time
-	peerError   error
+	cfg                CrossBorderConfig
+	load               func(context.Context, CrossBorderFilters) (CrossBorderResponse, error)
+	mu                 sync.Mutex
+	cache              map[string]crossBorderCacheEntry
+	flights            map[string]*crossBorderFlight
+	closed             bool
+	local              *DB
+	serverCfg          *Config
+	peerURL            string
+	peerMu             sync.Mutex
+	peer               *DB
+	peerOpening        chan struct{}
+	peerAttempt        time.Time
+	peerError          error
+	meshMapper         *crossBorderMeshMapper
+	meshMapperCancel   context.CancelFunc
+	meshMapperRevision uint64
+	meshMapperError    string
 }
 
 var errCrossBorderBusy = errors.New("cross-border report capacity reached")
 var errCrossBorderUnavailable = errors.New("cross-border source unavailable")
+var errCrossBorderMetadataChanged = errors.New("cross-border metadata changed")
 
 func (svc *crossBorderService) response(ctx context.Context, filters CrossBorderFilters) (CrossBorderResponse, error) {
 	if err := ctx.Err(); err != nil {
@@ -225,12 +237,21 @@ func (svc *crossBorderService) response(ctx context.Context, filters CrossBorder
 	// node-response caches; a configured TTL never delays a blacklist update.
 	key := strconv.FormatUint(svc.serverCfg.BlacklistGeneration(), 10) + ":" + strconv.FormatUint(svc.serverCfg.HiddenNamePrefixesGeneration(), 10) + ":" + string(b)
 	svc.mu.Lock()
+	revision := svc.meshMapper.Revision()
+	if revision != svc.meshMapperRevision {
+		clear(svc.cache)
+		svc.meshMapperRevision = revision
+	}
+	key += ":" + strconv.FormatUint(revision, 10)
 	if svc.closed {
 		svc.mu.Unlock()
 		return CrossBorderResponse{}, errCrossBorderUnavailable
 	}
 	if cached, ok := svc.cache[key]; ok && time.Since(cached.At) < time.Duration(svc.cfg.CacheSeconds)*time.Second {
 		svc.mu.Unlock()
+		if svc.meshMapper.Revision() != revision {
+			return CrossBorderResponse{}, errCrossBorderMetadataChanged
+		}
 		return cached.Response, nil
 	}
 	flight := svc.flights[key]
@@ -251,13 +272,16 @@ func (svc *crossBorderService) response(ctx context.Context, filters CrossBorder
 			timeout = 3
 		}
 		buildCtx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-		flight = &crossBorderFlight{done: make(chan struct{}), cancel: cancel}
+		flight = &crossBorderFlight{done: make(chan struct{}), cancel: cancel, metadataRevision: revision}
 		svc.flights[key] = flight
 		go func(f *crossBorderFlight) {
 			defer cancel()
 			response, err := svc.load(buildCtx, filters)
 			svc.mu.Lock()
 			defer svc.mu.Unlock()
+			if svc.meshMapper.Revision() != revision {
+				response, err = CrossBorderResponse{}, errCrossBorderMetadataChanged
+			}
 			if err == nil && !svc.closed {
 				if svc.cache == nil {
 					svc.cache = make(map[string]crossBorderCacheEntry)
@@ -289,6 +313,9 @@ func (svc *crossBorderService) response(ctx context.Context, filters CrossBorder
 	case <-ctx.Done():
 		return CrossBorderResponse{}, ctx.Err()
 	case <-flight.done:
+		if svc.meshMapper.Revision() != revision {
+			return CrossBorderResponse{}, errCrossBorderMetadataChanged
+		}
 		return flight.response, flight.err
 	}
 }
@@ -296,7 +323,33 @@ func (svc *crossBorderService) response(ctx context.Context, filters CrossBorder
 func newCrossBorderService(s *Server) *crossBorderService {
 	svc := &crossBorderService{cfg: s.cfg.GetCrossBorder(), local: s.db, serverCfg: s.cfg, peerURL: os.Getenv("CORESCOPE_CROSS_BORDER_PEER_DATABASE_URL")}
 	svc.load = svc.loadReport
+	if svc.cfg.Enabled && len(svc.cfg.MeshMapperRegions) > 0 {
+		key, err := crossBorderMeshMapperKey()
+		if err == nil {
+			svc.meshMapper, err = newCrossBorderMeshMapper(svc.cfg.MeshMapperRegions, key)
+		}
+		if err != nil {
+			svc.meshMapperError = "configuration_error"
+		} else if key != "" {
+			ctx, cancel := context.WithCancel(context.Background())
+			svc.meshMapperCancel = cancel
+			svc.meshMapper.onChange = svc.invalidateMeshMapperCache
+			go svc.meshMapper.Run(ctx)
+		}
+	}
 	return svc
+}
+
+func (svc *crossBorderService) invalidateMeshMapperCache() {
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	clear(svc.cache)
+	svc.meshMapperRevision = svc.meshMapper.Revision()
+	for _, flight := range svc.flights {
+		if flight.metadataRevision != svc.meshMapperRevision {
+			flight.cancel()
+		}
+	}
 }
 
 func (s *Server) closeCrossBorder() {
@@ -311,6 +364,9 @@ func (s *Server) closeCrossBorder() {
 	}
 	svc.cache = nil
 	svc.mu.Unlock()
+	if svc.meshMapperCancel != nil {
+		svc.meshMapperCancel()
+	}
 	svc.peerMu.Lock()
 	peer := svc.peer
 	svc.peer = nil
@@ -358,6 +414,9 @@ func (s *Server) handleCrossBorder(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			code = "query_timeout"
 			message = "The bounded report deadline expired. Retry with a shorter window."
+		}
+		if errors.Is(err, errCrossBorderMetadataChanged) {
+			code, message = "metadata_changed", "Scope metadata changed during this comparison. Refresh to use the current snapshot."
 		}
 		base.Findings = append(base.Findings, CrossBorderFinding{Code: code, Severity: "warning", Message: message})
 		writeJSON(w, base)
@@ -420,6 +479,9 @@ func (svc *crossBorderService) loadReport(ctx context.Context, f CrossBorderFilt
 		local.SharedObserverIDs = append(peerIDs, localIDs...)
 		local.SharedIdentityComplete = peerErr == nil && localErr == nil
 	}
+	if err := applyCrossBorderJointPrivacy(ctx, svc.local, peerDB, &local, &peer, svc.serverCfg); err != nil {
+		return CrossBorderResponse{}, err
+	}
 	return buildCrossBorder(ctx, svc.cfg, f, local, peer, now)
 }
 
@@ -469,5 +531,6 @@ func applyCrossBorderPrivacy(ctx context.Context, db *DB, snapshot *crossBorderS
 		}
 	}
 	snapshot.Observations = rows
+	snapshot.DashboardHiddenIDs = hidden
 	return nil
 }

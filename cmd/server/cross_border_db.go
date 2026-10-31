@@ -418,7 +418,10 @@ func (db *DB) crossBorderObservationQuerySelected(iatas []string, since, until t
 	}
 	raw, rawLen := "''", "0"
 	if db.hasObsRawHex {
-		raw = "substr(COALESCE(o.raw_hex,''),1,142)"
+		// A valid firmware packet is at most 254 bytes (header/transport,
+		// MAX_PATH_SIZE and MAX_PACKET_PAYLOAD). Keep raw server-only; the
+		// scope matcher needs the complete encrypted payload for its HMAC.
+		raw = "substr(COALESCE(o.raw_hex,''),1,512)"
 		rawLen = "length(COALESCE(o.raw_hex,''))"
 	}
 	args = append(args, cfg.ObservationLimit+1)

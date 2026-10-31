@@ -48,7 +48,15 @@ func (svc *crossBorderService) loadDashboard(ctx context.Context, f CrossBorderF
 		return CrossBorderResponse{}, ctx.Err()
 	}
 	if localErr != nil {
+		// A hidden name known only to the unavailable side may be a public
+		// alias in the peer database. Do not publish that unchecked alias.
+		if crossBorderHasHiddenNames(svc.serverCfg) {
+			return CrossBorderResponse{}, errCrossBorderUnavailable
+		}
 		local = crossBorderSnapshot{}
+	}
+	if err := crossBorderApplyHiddenIdentities(ctx, &local, &peer); err != nil {
+		return CrossBorderResponse{}, err
 	}
 	local.SharedIdentityChecked = true
 	local.SharedIdentityComplete = local.Available && peerIDsComplete && localIDsComplete
@@ -66,6 +74,15 @@ func (svc *crossBorderService) loadDashboard(ctx context.Context, f CrossBorderF
 			local.SharedObserverIDs = append(local.SharedObserverIDs, id)
 		}
 	}
+	metadata, catalog := svc.dashboardMetadata(local, peer, f)
+	candidateNames := make([]string, 0, len(catalog))
+	for _, entry := range catalog {
+		candidateNames = append(candidateNames, entry.Name)
+	}
+	resolution, err := resolveCrossBorderScopes(ctx, []*crossBorderSnapshot{&local, &peer}, candidateNames)
+	if err != nil {
+		return CrossBorderResponse{}, err
+	}
 	// Keep the established peer packet drill-down in this bulk response, while
 	// the dashboard below aggregates independent populations on both sides.
 	response, err := buildCrossBorder(ctx, cfg, f, local, peer, now)
@@ -75,6 +92,12 @@ func (svc *crossBorderService) loadDashboard(ctx context.Context, f CrossBorderF
 	response.Dashboard, err = buildCrossBorderDashboard(ctx, svc.cfg, f, local, peer, now)
 	if err != nil {
 		return CrossBorderResponse{}, err
+	}
+	response.ScopeResolution = &resolution
+	if resolution.Limited {
+		response.Status = "partial"
+		response.Completeness.Complete = false
+		response.Findings = append(response.Findings, CrossBorderFinding{Code: "scope_resolution_limited", Severity: "warning", Message: "Scope-name matching reached its bounded catalog or packet budget. Unmatched nonzero transport scopes remain scoped traffic with unresolved names."})
 	}
 	// Cached detail slices must not retain the omitted50k-record backing
 	// arrays. Scope-name lists have an independent display budget too.
@@ -138,6 +161,7 @@ func (svc *crossBorderService) loadDashboard(ctx context.Context, f CrossBorderF
 	for _, name := range names {
 		response.Options.Scopes = append(response.Options.Scopes, CrossBorderScopeOption{Value: name, Label: name})
 	}
+	applyCrossBorderMetadata(&response, metadata, catalog)
 	return response, nil
 }
 
@@ -166,6 +190,7 @@ func (db *DB) readCrossBorderDashboard(ctx context.Context, regions []string, f 
 	if err != nil {
 		return snapshot, nil, false, err
 	}
+	snapshot.DashboardHiddenIDs = hidden
 	isHidden := func(id string) bool {
 		return hidden[crossBorderID(id)] || (serverCfg != nil && serverCfg.IsBlacklisted(id))
 	}
@@ -237,6 +262,7 @@ func (db *DB) readCrossBorderDashboard(ctx context.Context, regions []string, f 
 	ids := map[string]bool{}
 	rows, err = db.conn.QueryContext(ctx, `SELECT id,UPPER(TRIM(COALESCE(iata,''))) FROM observers ORDER BY id LIMIT `+fmt.Sprint(crossBorderDashboardKeys+1))
 	if err != nil {
+		snapshot.DashboardNodeIndexComplete = false
 		return snapshot, ids, false, nil
 	}
 	complete := true
@@ -251,6 +277,7 @@ func (db *DB) readCrossBorderDashboard(ctx context.Context, regions []string, f 
 		var id, region string
 		if err = rows.Scan(&id, &region); err != nil {
 			rows.Close()
+			snapshot.DashboardNodeIndexComplete = false
 			return snapshot, ids, false, nil
 		}
 		key := crossBorderID(id)
@@ -263,6 +290,9 @@ func (db *DB) readCrossBorderDashboard(ctx context.Context, regions []string, f 
 		complete = false
 	}
 	rows.Close()
+	if err := crossBorderAppendObserverIdentities(ctx, &snapshot, ids, complete, serverCfg); err != nil {
+		return snapshot, ids, complete, err
+	}
 	regionKeys := make([]string, 0, len(regionCounts))
 	for key := range regionCounts {
 		regionKeys = append(regionKeys, key)
@@ -280,6 +310,41 @@ func (db *DB) readCrossBorderDashboard(ctx context.Context, regions []string, f 
 		snapshot.ObserversTruncated = true
 	}
 	return snapshot, ids, complete, nil
+}
+
+// Observer-only identities outside the selected regions still challenge path
+// prefixes. Reuse the already fetched full observer list, preserving a known
+// node role and sharing the same hard bound as the original node index.
+func crossBorderAppendObserverIdentities(ctx context.Context, snapshot *crossBorderSnapshot, ids map[string]bool, complete bool, cfg *Config) error {
+	if !complete || len(ids) > crossBorderDashboardKeys || len(snapshot.DashboardNodes) > crossBorderDashboardKeys {
+		snapshot.DashboardNodeIndexComplete = false
+	}
+	if len(ids) > crossBorderDashboardKeys {
+		return ctx.Err()
+	}
+	known := make(map[string]bool, len(snapshot.DashboardNodes))
+	for _, node := range snapshot.DashboardNodes {
+		known[crossBorderID(node.PublicKey)] = true
+	}
+	for i, rawKey := range crossBorderIdentityKeys(ids) {
+		if i&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		key := crossBorderID(rawKey)
+		if known[key] || !crossBorderPublicKey(key) {
+			continue
+		}
+		if len(snapshot.DashboardNodes) >= crossBorderDashboardKeys {
+			snapshot.DashboardNodeIndexComplete = false
+			break
+		}
+		hidden := snapshot.DashboardHiddenIDs[key] || (cfg != nil && cfg.IsBlacklisted(key))
+		snapshot.DashboardNodes = append(snapshot.DashboardNodes, crossBorderNodeIdentity{PublicKey: key, Hidden: hidden})
+		known[key] = true
+	}
+	return ctx.Err()
 }
 
 // Catalog existence is not SELECT permission. A known retained set must be

@@ -22,6 +22,8 @@
     "_comment_allowedLocalIata": "Explicit local-reference IATA allowlist. Requests outside this list are rejected. An empty list authorizes no local regions; no country or deployment allowlist is inferred.",
     "defaultLocalIata": [],
     "defaultPeerIata": [],
+    "meshMapperRegions": [],
+    "_comment_meshMapperRegions": "Optional MeshMapper region/group codes (at most eight) for background Repeaters/Scopes enrichment. Uses the server-only CORESCOPE_CROSS_BORDER_MESHMAPPER_API_KEY or CORESCOPE_CROSS_BORDER_MESHMAPPER_API_KEY_FILE. Keep the key out of this file. Refreshes every 30 minutes independently of visitors; verify endpoint, geographic and IP permissions. Missing/denied metadata does not disable local traffic analysis.",
     "_comment_defaultIata": "Explicit initial selections; defaultLocalIata must be a subset of allowedLocalIata. Empty selections require the visitor to choose regions. The peer collector has its own separate observerIATAWhitelist.",
     "defaultWindowMinutes": 60,
     "maxWindowMinutes": 360,

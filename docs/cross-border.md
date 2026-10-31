@@ -1,4 +1,101 @@
-# Border links
+# Cross-border traffic
+
+The **Crossings** view answers four questions: which retained packet paths
+cross the Canada–US border in each direction, whether those packets are
+scoped, how far their observed paths reach into the other country, and which
+repeaters appear on those paths. The map and packet inspector use one bounded
+snapshot. Direction and path selection do not fetch another report. Existing
+listener, path-width, scope, radio and repeater views remain available as
+supporting diagnostics.
+
+## Crossing evidence
+
+Direction comes from adjacent, uniquely resolved flood-path hops at reported
+Canadian and American positions. It does not come from broker nationality,
+airport codes or the order in which two databases first stored a packet.
+Unresolved, hidden, colliding and one-byte identities remain gaps. A path is
+never joined through a missing hop, and alternative received paths are not
+stitched into a route that nobody observed. An explicit reception may supply
+the final listener endpoint when its full identity and position are known.
+
+Each direction counts distinct packet contents with qualifying crossing
+evidence. A packet that crosses and returns can appear in both directions;
+the two counts must not be added to obtain unique traffic across the network.
+Scoped, unscoped, transport-wildcard and mixed observations are separate
+categories. A nonzero transport scope with an unknown name is still scoped.
+Names attached to the recorded header do not prove that every earlier hop
+carried the same scope, because a repeater may rescope a packet.
+
+The furthest-reach measure is the greatest approximate distance from the
+mapped international border to a downstream observed position in the
+destination country. It is distinct from distance along the visible path.
+Neither is the maximum distance a packet actually propagated: unobserved
+receptions and missing positions are unknown. Current reported positions are
+not a timestamped location history. Locations near the mapped border are
+treated conservatively. Geometry sources and licences are in
+[`cmd/server/cross_border_data/NOTICE.md`](../cmd/server/cross_border_data/NOTICE.md).
+
+The live switch refreshes retained path evidence; it is not a replay of every
+RF arrival. Observation deduplication preserves the first stored timestamp
+and can update header and signal fields later. Chart gaps and partial samples
+remain explicit. Per-frame airtime is an estimate using the stated reference
+radio profile, never a measured route total or proof of congestion caused by
+one country. Reported radio airtime remains separate contextual information.
+
+## Scope names and MeshMapper
+
+The scope selector combines published regional guidance, the ON/QC proposal,
+current local declarations and observed names, and available MeshMapper
+metadata. Known names remain selectable without an observation in the current
+window. Published or proposed settings are not evidence of adoption.
+Names are case-sensitive; `ca` and `can` remain different scopes.
+
+For retained scoped packets whose names were not stored, the server can test
+public names against the complete recorded header and payload using the
+existing MeshCore scope matcher. It performs bounded, memoized matching and
+never returns raw payload bytes. A unique public-catalog match is labelled as
+a match against that catalog, not universal proof of the sender's chosen name.
+Collisions remain unresolved. A matching budget exhausted by a large sample
+is disclosed rather than turned into an absence claim.
+
+MeshMapper is optional enrichment. Configure `crossBorder.meshMapperRegions`
+with at most eight region or group codes, and supply the existing integration
+key through `CORESCOPE_CROSS_BORDER_MESHMAPPER_API_KEY` or the server-only
+`CORESCOPE_CROSS_BORDER_MESHMAPPER_API_KEY_FILE`. No key belongs in JSON served
+to visitors, JavaScript, URLs or version control. The key must permit the
+configured regions, Repeaters and Scopes endpoints, and the server's outgoing
+IP if the key has an IP restriction.
+
+The adapter uses the official
+[Repeaters](https://wiki.meshmapper.net/repeaters-api/) and
+[Scopes](https://wiki.meshmapper.net/scopes-api/) APIs. Background refresh is
+separate from visitor requests and the traffic refresh. Its 30-minute cadence
+with eight configured regions uses at most 768 ordinary endpoint reads per
+day; other applications sharing the key also consume its read budget.
+Respect `Retry-After` and the key's actual limits. Read metadata access does
+not consume the separate Coverage quota.
+
+Repeater exports can expand a region into a group. Join by full public key
+and deduplicate across regions; never sum overlapping regional inventories.
+MeshMapper's IATA field describes where its latest advert was received, not
+the device's country. Reported scope answers, wardriver uploads, inferred
+forwarding and default advert scopes keep their separate timestamps and
+provenance. A missing answer is unknown, and a declaration alone is not proof
+that a particular packet was forwarded. MeshMapper's one-byte inference does
+not override CoreScope's collision rules.
+
+Transient failures retain the last good parsed metadata with its age shown.
+Authentication or authorization denial clears it and invalidates report
+caches. Local telemetry continues to work when external metadata is denied
+or unavailable. Follow the provider's
+[API access and caching contract](https://wiki.meshmapper.net/api-keys/).
+
+Configuration follow-up: expose public default region choices, refresh and
+display controls in the existing customizer; retain validated operator-only
+resource ceilings and secret configuration on the server. Existing theme
+variables control charts, filters and map accents.
+
+## Listener comparison and operating reference
 
 Border links is an opt-in public comparison of a local feed and an isolated peer feed. Open `/#/cross-border`; the visual overview reads `GET /api/cross-border?view=dashboard`. It compares path-width adoption, flood scopes, regional overlap, repeater carrying evidence and reported radio airtime. Packet details remain peer-primary under **Inspect packet and metadata evidence**. None of these views establishes an RF route across a border, packet loss, device misconfiguration or which country caused congestion.
 
