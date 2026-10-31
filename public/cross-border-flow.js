@@ -183,9 +183,12 @@
       if (typeof window.MC_applyTileFilter === 'function') window.MC_applyTileFilter();
     }
     function fitPaths() {
-      if (!map || !paths.length) return;
+      if (!map || !paths.length || !map.getContainer().offsetWidth || !map.getContainer().offsetHeight) return false;
+      refreshMapSize();
       var points = []; paths.forEach(function (path) { pathSegments(path).forEach(function (part) { part.forEach(function (p) { points.push(p); }); }); });
-      if (points.length) map.fitBounds(L.latLngBounds(points),{padding:[24,24],maxZoom:12,animate:false});
+      if (!points.length) return false;
+      map.fitBounds(L.latLngBounds(points),{padding:[24,24],maxZoom:12,animate:false});
+      return true;
     }
     function restoreViewport() {
       if (!map || ui.lat == null || ui.lon == null || ui.lat === '' || ui.lon === '') return;
@@ -225,7 +228,14 @@
         var label = document.createElement('span'); label.textContent = String(hop.name || key.slice(0,12)) + ' · ' + (hop.country || 'country unknown') + (hop.kind === 'receiver' ? ' · receiver' : ''); marker.bindTooltip(label);
       });
       markers.forEach(function (marker,key) {if (!visibleMarkers.has(key)) {map.removeLayer(marker);markers.delete(key);}});
-      if (!fitOnce && (paths.length || ui.lat)) { fitOnce=true;var lat = Number(ui.lat), lon = Number(ui.lon), zoom = Number(ui.zoom); if (ui.lat && ui.lon && Number.isFinite(lat) && Number.isFinite(lon) && Number.isFinite(zoom)) map.setView([lat,lon],zoom,{animate:false}); else fitPaths(); }
+      if (!fitOnce && (paths.length || ui.lat) && map.getContainer().offsetWidth && map.getContainer().offsetHeight) {
+        // A theme repaint can create Leaflet while the dashboard is hidden.
+        // Refresh its cached zero size before fitting, and defer until visible.
+        var lat = Number(ui.lat), lon = Number(ui.lon), zoom = Number(ui.zoom);
+        if (ui.lat && ui.lon && Number.isFinite(lat) && Number.isFinite(lon) && Number.isFinite(zoom)) {
+          refreshMapSize();map.setView([lat,lon],zoom,{animate:false});fitOnce=true;
+        } else fitOnce=fitPaths();
+      }
     }
     function scopeEvidence(hop) {
       var repeater = mapper.get(String(hop.publicKey || '').toLowerCase()); if (!repeater) return 'MeshMapper scope report unavailable.';

@@ -64,6 +64,11 @@ const clone = value => JSON.parse(JSON.stringify(value));
       if (url.href.startsWith('https://unpkg.com/chart.js@4.5.1/') || url.href.startsWith('https://unpkg.com/leaflet@1.9.4/')) return route.continue();
       if (url.origin !== BASE) return route.fulfill({ body: '', contentType: 'text/plain' });
       if (url.pathname === '/api/cross-border') {
+        if (mode === 'hidden-map-start') await page.evaluate(() => {
+          window.dispatchEvent(new Event('theme-changed'));
+          const map = document.querySelector('#cb-flow-map');
+          if (!map._leaflet_id || map.offsetWidth !== 0 || map.offsetHeight !== 0) throw new Error('Fixture must initialize Leaflet while its dashboard is hidden');
+        });
         calls.push(url.searchParams);
         if (mode === 'error') return route.fulfill({ status: 503, json: { error: 'Fixture unavailable' } });
         if (mode === 'invalid') return route.fulfill({ status: 400, json: { error: 'Fixture filter rejected' } });
@@ -255,6 +260,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
     });
     await check('first map fit covers the same paths as the fit control', async () => {
       const previousURL = page.url();
+      mode='hidden-map-start';
       await page.goto(BASE + '/#/cross-border'); await ready();
       await drawnPaths();
       const first = new URL(page.url()).hash;
@@ -265,6 +271,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.strictEqual(before.get('zoom'), after.get('zoom'), 'initial fit must not zoom into only part of the crossing paths');
       assert(Math.abs(Number(before.get('lat')) - Number(after.get('lat'))) < 0.001, 'initial fit latitude must cover the same path extent');
       assert(Math.abs(Number(before.get('lon')) - Number(after.get('lon'))) < 0.001, 'initial fit longitude must cover the same path extent');
+      mode='normal';
       await page.goto(previousURL); await ready();
     });
     await check('live toggle updates the map status immediately without fetching', async () => {
