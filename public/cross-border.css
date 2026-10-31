@@ -173,6 +173,7 @@
 .cb-map-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; margin: 6px 0 12px; }
 .cb-map-ca { color: var(--accent); font-weight: 600; }
 .cb-map-us { color: var(--palette-purple-500); font-weight: 600; }
+.cb-map-both { color: var(--warning); font-weight: 600; }
 .cb-flow-map { height: 460px; width: 100%; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--section-bg); z-index: 0; }
 .cb-flow-map .leaflet-control-attribution { font-size: 10px; }
 .cb-map-sources { font-size: 11px; color: var(--text-muted); }

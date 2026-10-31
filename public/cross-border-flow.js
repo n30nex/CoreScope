@@ -43,6 +43,10 @@
     if (current.length > 1) segments.push(current);
     return segments;
   }
+  function pathLineStyle(path, colors) {
+    var directions = rows(path && path.directions), returning = directions.indexOf('ca_us') >= 0 && directions.indexOf('us_ca') >= 0;
+    return { color: colors[returning ? 4 : directions[0] === 'us_ca' ? 1 : 0], dashArray: returning ? '2 4' : directions[0] === 'us_ca' ? '7 4' : null };
+  }
   function selectedPaths(flow, direction) {
     if(flow && flow.identityComplete===false)return [];
     var selected = normalizeDirection(direction), seen = new Set();
@@ -95,7 +99,7 @@
     var matched=path.scopeKey!=='transport-zero' && path.scope && path.scope.kind==='named' && path.scope.resolution==='catalog_match';
     return scopeName(path)+(matched?' · matched against known names':'');
   }
-  var api = { normalizeDirection: normalizeDirection, directionSummary: directionSummary, timeline: timeline, pathSegments: pathSegments, selectedPaths: selectedPaths, catalogRows: catalogRows, crossingRepeaters: crossingRepeaters, meshMapperStatusLabel:meshMapperStatusLabel, scopeLimitMessages:scopeLimitMessages, hopReasonLabel:hopReasonLabel, pathScopeLabel:pathScopeLabel };
+  var api = { normalizeDirection: normalizeDirection, directionSummary: directionSummary, timeline: timeline, pathSegments: pathSegments, pathLineStyle: pathLineStyle, selectedPaths: selectedPaths, catalogRows: catalogRows, crossingRepeaters: crossingRepeaters, meshMapperStatusLabel:meshMapperStatusLabel, scopeLimitMessages:scopeLimitMessages, hopReasonLabel:hopReasonLabel, pathScopeLabel:pathScopeLabel };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window === 'undefined') return;
 
@@ -114,7 +118,7 @@
           '<dl><div><dt>Scoped</dt><dd id="cb-flow-' + d[0] + '-scoped">—</dd></div><div><dt>Unscoped</dt><dd id="cb-flow-' + d[0] + '-unscoped">—</dd></div><div><dt>Repeaters on paths</dt><dd id="cb-flow-' + d[0] + '-repeaters">—</dd></div><div><dt title="Shortest distance from the Canada–US border using reported positions. Reception may extend farther.">Furthest into ' + (d[0] === 'ca_us' ? 'the USA' : 'Canada') + '</dt><dd id="cb-flow-' + d[0] + '-distance">—</dd></div></dl></article>';
       }).join('') + '</div><p class="cb-note">A packet can cross in both directions. These counts describe retained path evidence, not every radio transmission.</p>' +
       '<section class="cb-flow-map-section analytics-card"><div class="cb-header"><div><h2>Live cross-border paths</h2><p class="cb-note" id="cb-flow-map-status"></p></div><div class="cb-map-controls"><div class="cb-direction-controls" role="group" aria-label="Map path direction"><button type="button" data-direction="both" aria-pressed="true">Both directions</button><button type="button" data-direction="ca_us" aria-pressed="false">Canada → USA</button><button type="button" data-direction="us_ca" aria-pressed="false">USA → Canada</button></div><button type="button" id="cb-flow-fit">Fit paths</button></div></div>' +
-      '<div class="cb-map-legend"><span class="cb-map-ca">━━ Canada → USA</span><span class="cb-map-us">┄┄ USA → Canada</span><span>● Repeater · ○ Receiving observer</span></div>' +
+      '<div class="cb-map-legend"><span class="cb-map-ca">━━ Canada → USA</span><span class="cb-map-us">┄┄ USA → Canada</span><span class="cb-map-both">··· Both directions</span><span>● Repeater · ○ Receiving observer</span></div>' +
       '<div id="cb-flow-map" class="cb-flow-map" role="region" aria-label="Observed cross-border paths map"></div><p id="cb-flow-map-fallback" class="cb-note" hidden>The map is unavailable. All returned paths remain accessible in the list below.</p>' +
       '<p class="cb-note">Lines join resolved adjacent hops at reported positions. Missing hops are gaps; paths do not show terrain or prove maximum radio range.</p><p class="cb-map-sources">Country geometry: <a href="https://www.geoboundaries.org/">geoBoundaries</a> / <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap</a> · Border: <a href="https://internationalboundarycommission.org/en/maps-coordinates/coordinates.php">International Boundary Commission</a></p>' +
       '<div class="cb-flow-inspector"><section><h3>Observed paths</h3><p id="cb-flow-path-count" class="cb-note"></p><div id="cb-flow-path-list" class="cb-flow-path-list" role="group" aria-label="Observed crossing paths"></div></section>' +
@@ -199,13 +203,13 @@
       if (!mapReady()) return;
       var colors = palette(), retained = new Set(), visibleMarkers = new Map();
       paths.forEach(function (path) {
-        var segments = pathSegments(path), key = path.id, color = rows(path.directions).indexOf('ca_us') >= 0 ? colors[0] : colors[1];
+        var segments = pathSegments(path), key = path.id, style = pathLineStyle(path, colors);
         retained.add(key);
         if (segments.length) {
           var line = lines.get(key);
-          if (!line) { line = L.polyline(segments,{color:color,weight:2,opacity:.55}).addTo(map); line.on('click',function () {change({path:key}); el('cb-flow-detail-title').focus();}); lines.set(key,line); }
+          if (!line) { line = L.polyline(segments,{color:style.color,weight:2,opacity:.55}).addTo(map); line.on('click',function () {change({path:key}); el('cb-flow-detail-title').focus();}); lines.set(key,line); }
           else line.setLatLngs(segments);
-          line.setStyle({color:color,dashArray:rows(path.directions).length > 1 ? '2 4' : rows(path.directions)[0] === 'us_ca' ? '7 4' : null,weight:ui.path === key ? 5 : 2,opacity:ui.path && ui.path !== key ? .18 : .7});
+          line.setStyle({color:style.color,dashArray:style.dashArray,weight:ui.path === key ? 5 : 2,opacity:ui.path && ui.path !== key ? .18 : .7});
         } else if (lines.has(key)) { map.removeLayer(lines.get(key)); lines.delete(key); }
         rows(path.hops).slice(0,MAX_HOPS).forEach(function (hop) {
           var p = point(hop); if (!p || !hop.publicKey || visibleMarkers.size >= 1000) return;

@@ -67,6 +67,14 @@ test('map segments cannot jump over an unresolved hop or missing index', () => {
   assert.deepStrictEqual(flow.pathSegments({hops:[{...hops[2],location:{lat:0,lon:0}},hops[3]]}), []);
   ['', ' ', false, true].forEach(lat => assert.deepStrictEqual(flow.pathSegments({hops:[{...hops[2],location:{lat,lon:-78.9}},hops[3]]}), []));
 });
+test('map styles distinguish returning paths from either one-way direction', () => {
+  assert.strictEqual(typeof flow.pathLineStyle, 'function');
+  const colors = ['canada', 'usa', 'success', 'muted', 'both'];
+  assert.deepStrictEqual(flow.pathLineStyle({directions:['ca_us']}, colors), {color:'canada',dashArray:null});
+  assert.deepStrictEqual(flow.pathLineStyle({directions:['us_ca']}, colors), {color:'usa',dashArray:'7 4'});
+  assert.deepStrictEqual(flow.pathLineStyle({directions:['ca_us','us_ca']}, colors), {color:'both',dashArray:'2 4'});
+  assert.deepStrictEqual(flow.pathLineStyle({directions:['us_ca','ca_us']}, colors), {color:'both',dashArray:'2 4'});
+});
 test('direction filtering keeps genuine returning paths in each direction without duplicating records', () => {
   assert.strictEqual(typeof flow.selectedPaths, 'function');
   const paths = [{id:'one',directions:['ca_us']},{id:'return',directions:['ca_us','us_ca']},{id:'two',directions:['us_ca']}];
