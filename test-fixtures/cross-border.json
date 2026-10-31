@@ -66,6 +66,11 @@
         "iata": "AAA",
         "label": "AAA",
         "observers": 2
+      },
+      {
+        "iata": "AAD",
+        "label": "Additional Canadian area",
+        "observers": 1
       }
     ],
     "peerRegions": [
@@ -91,6 +96,30 @@
       {
         "value": "example",
         "label": "example"
+      },
+      {
+        "value": "onny",
+        "label": "onny · Ontario / New York"
+      },
+      {
+        "value": "onqc",
+        "label": "onqc · Ontario / Québec"
+      },
+      {
+        "value": "ykf",
+        "label": "ykf · Waterloo"
+      },
+      {
+        "value": "yyz",
+        "label": "yyz · Toronto"
+      },
+      {
+        "value": "ca",
+        "label": "ca · ca"
+      },
+      {
+        "value": "can",
+        "label": "can · Canada"
       }
     ],
     "windowMinutes": [
@@ -1199,6 +1228,507 @@
       }
     ],
     "identityComplete": true,
-    "regionPairsTruncated": false
+    "regionPairsTruncated": false,
+    "flow": {
+      "status": "available",
+      "identityComplete": true,
+      "eligibleContents": 6,
+      "unresolvedContents": 2,
+      "pathsTruncated": false,
+      "directions": [
+        {
+          "key": "ca_us",
+          "label": "Canada → USA",
+          "contents": 2,
+          "scoped": 1,
+          "unscoped": 1,
+          "transportWildcard": 0,
+          "mixed": 0,
+          "unknownScopeName": 0,
+          "furthestKm": 20.8,
+          "repeaters": 2,
+          "timeline": [
+            {
+              "at": "2026-10-28T19:00:00Z",
+              "contents": null,
+              "complete": false
+            },
+            {
+              "at": "2026-10-28T19:55:00Z",
+              "contents": 2,
+              "complete": true
+            }
+          ],
+          "scopes": [
+            {
+              "key": "named:onny",
+              "label": "onny",
+              "contents": 1
+            },
+            {
+              "key": "unscoped",
+              "label": "Unscoped",
+              "contents": 1
+            }
+          ]
+        },
+        {
+          "key": "us_ca",
+          "label": "USA → Canada",
+          "contents": 2,
+          "scoped": 1,
+          "unscoped": 1,
+          "transportWildcard": 0,
+          "mixed": 0,
+          "unknownScopeName": 1,
+          "furthestKm": 35.7,
+          "repeaters": 2,
+          "timeline": [
+            {
+              "at": "2026-10-28T19:00:00Z",
+              "contents": null,
+              "complete": false
+            },
+            {
+              "at": "2026-10-28T19:55:00Z",
+              "contents": 2,
+              "complete": true
+            }
+          ],
+          "scopes": [
+            {
+              "key": "unknown",
+              "label": "Scoped name unresolved",
+              "contents": 1
+            },
+            {
+              "key": "unscoped",
+              "label": "Unscoped",
+              "contents": 1
+            }
+          ]
+        }
+      ],
+      "paths": [
+        {
+          "id": "crossing-ca-us",
+          "hash": "1111111111111111",
+          "directions": [
+            "ca_us"
+          ],
+          "firstRecordedAt": "2026-10-28T19:55:00Z",
+          "scope": {
+            "kind": "named",
+            "name": "onny",
+            "resolution": "catalog_match"
+          },
+          "scopeKey": "named:onny",
+          "hopWidth": 3,
+          "hops": [
+            {
+              "index": 0,
+              "publicKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "name": "Canadian fixture relay",
+              "country": "CA",
+              "location": {
+                "lat": 43.45,
+                "lon": -79.5,
+                "reportedAt": null
+              },
+              "reason": "",
+              "kind": "repeater"
+            },
+            {
+              "index": 1,
+              "publicKey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "name": "US fixture relay",
+              "country": "US",
+              "location": {
+                "lat": 43.13,
+                "lon": -78.95,
+                "reportedAt": null
+              },
+              "reason": "",
+              "kind": "repeater"
+            },
+            {
+              "index": 2,
+              "publicKey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "name": "US fixture receiver",
+              "country": "US",
+              "location": {
+                "lat": 43.0,
+                "lon": -78.8,
+                "reportedAt": null
+              },
+              "reason": "",
+              "kind": "receiver"
+            }
+          ],
+          "crossings": [
+            {
+              "fromIndex": 0,
+              "toIndex": 1,
+              "direction": "ca_us",
+              "legKm": 56.2
+            }
+          ],
+          "distanceKm": 72.3,
+          "furthestKm": 20.8,
+          "airtimeMs": 230.1,
+          "airtimeSource": "Reference profile: 910.525 MHz, SF7, BW62.5, CR8; one saved frame",
+          "snr": 4.5,
+          "rssi": -105
+        },
+        {
+          "id": "crossing-us-ca",
+          "hash": "2222222222222222",
+          "directions": [
+            "us_ca"
+          ],
+          "firstRecordedAt": "2026-10-28T19:57:00Z",
+          "scope": {
+            "kind": "unknown",
+            "name": null
+          },
+          "scopeKey": "unknown",
+          "hopWidth": 2,
+          "hops": [
+            {
+              "index": 0,
+              "publicKey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "name": "US fixture relay",
+              "country": "US",
+              "location": {
+                "lat": 43.13,
+                "lon": -78.95,
+                "reportedAt": null
+              },
+              "reason": "",
+              "kind": "repeater"
+            },
+            {
+              "index": 1,
+              "publicKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "name": "Canadian fixture relay",
+              "country": "CA",
+              "location": {
+                "lat": 43.45,
+                "lon": -79.5,
+                "reportedAt": null
+              },
+              "reason": "",
+              "kind": "repeater"
+            },
+            {
+              "index": 2,
+              "publicKey": "",
+              "name": "",
+              "country": "",
+              "location": null,
+              "reason": "unresolved_hop",
+              "kind": "unknown"
+            },
+            {
+              "index": 3,
+              "publicKey": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "name": "Canadian fixture receiver",
+              "country": "CA",
+              "location": {
+                "lat": 43.5,
+                "lon": -79.9,
+                "reportedAt": null
+              },
+              "reason": "",
+              "kind": "receiver"
+            }
+          ],
+          "crossings": [
+            {
+              "fromIndex": 0,
+              "toIndex": 1,
+              "direction": "us_ca",
+              "legKm": 56.2
+            }
+          ],
+          "distanceKm": null,
+          "furthestKm": 35.7,
+          "airtimeMs": null,
+          "airtimeSource": "",
+          "snr": null,
+          "rssi": null
+        },
+        {
+          "id": "crossing-return",
+          "hash": "3333333333333333",
+          "directions": [
+            "ca_us",
+            "us_ca"
+          ],
+          "firstRecordedAt": "2026-10-28T19:55:00Z",
+          "scope": {
+            "kind": "unscoped",
+            "name": null
+          },
+          "scopeKey": "unscoped",
+          "hopWidth": 3,
+          "hops": [
+            {
+              "index": 0,
+              "publicKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "name": "Canadian fixture relay",
+              "country": "CA",
+              "location": {
+                "lat": 43.45,
+                "lon": -79.5,
+                "reportedAt": null
+              },
+              "reason": "",
+              "kind": "repeater"
+            },
+            {
+              "index": 1,
+              "publicKey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "name": "US fixture relay",
+              "country": "US",
+              "location": {
+                "lat": 43.13,
+                "lon": -78.95,
+                "reportedAt": null
+              },
+              "reason": "",
+              "kind": "repeater"
+            },
+            {
+              "index": 2,
+              "publicKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "name": "Canadian fixture relay",
+              "country": "CA",
+              "location": {
+                "lat": 43.45,
+                "lon": -79.5,
+                "reportedAt": null
+              },
+              "reason": "",
+              "kind": "repeater"
+            }
+          ],
+          "crossings": [
+            {
+              "fromIndex": 0,
+              "toIndex": 1,
+              "direction": "ca_us",
+              "legKm": 56.2
+            },
+            {
+              "fromIndex": 1,
+              "toIndex": 2,
+              "direction": "us_ca",
+              "legKm": 56.2
+            }
+          ],
+          "distanceKm": 112.4,
+          "furthestKm": 20.8,
+          "airtimeMs": 230.1,
+          "airtimeSource": "Reference profile: 910.525 MHz, SF7, BW62.5, CR8; one saved frame",
+          "snr": 4.5,
+          "rssi": -105
+        }
+      ],
+      "repeaters": [
+        {
+          "publicKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Canadian fixture relay",
+          "country": "CA",
+          "location": {
+            "lat": 43.45,
+            "lon": -79.5,
+            "reportedAt": null
+          },
+          "directions": [
+            "ca_us",
+            "us_ca"
+          ],
+          "contents": 3,
+          "crossingContents": 3,
+          "scopes": [
+            {
+              "key": "named:onny",
+              "label": "onny",
+              "contents": 1
+            },
+            {
+              "key": "unknown",
+              "label": "Name unresolved",
+              "contents": 1
+            },
+            {
+              "key": "unscoped",
+              "label": "Unscoped",
+              "contents": 1
+            }
+          ],
+          "lastRecordedAt": "2026-10-28T19:57:00Z"
+        },
+        {
+          "publicKey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "US fixture relay",
+          "country": "US",
+          "location": {
+            "lat": 43.13,
+            "lon": -78.95,
+            "reportedAt": null
+          },
+          "directions": [
+            "ca_us",
+            "us_ca"
+          ],
+          "contents": 3,
+          "crossingContents": 3,
+          "scopes": [
+            {
+              "key": "named:onny",
+              "label": "onny",
+              "contents": 1
+            },
+            {
+              "key": "unknown",
+              "label": "Name unresolved",
+              "contents": 1
+            },
+            {
+              "key": "unscoped",
+              "label": "Unscoped",
+              "contents": 1
+            }
+          ],
+          "lastRecordedAt": "2026-10-28T19:57:00Z"
+        }
+      ],
+      "nonCrossingContents": 1
+    }
+  },
+  "scopeCatalog": [
+    {
+      "name": "onny",
+      "label": "Ontario / New York",
+      "sources": [
+        {
+          "label": "Cross-border guide",
+          "url": "https://example.org/scopes",
+          "status": "published"
+        }
+      ],
+      "meshMapperRegions": [
+        "AAA",
+        "BBB"
+      ]
+    },
+    {
+      "name": "onqc",
+      "label": "Ontario / Québec",
+      "sources": [
+        {
+          "label": "ON/QC pilot",
+          "url": "https://example.org/scopes",
+          "status": "proposed"
+        }
+      ],
+      "meshMapperRegions": [
+        "AAA"
+      ]
+    },
+    {
+      "name": "ykf",
+      "label": "Waterloo",
+      "sources": [
+        {
+          "label": "Region reference",
+          "url": "https://example.org/scopes",
+          "status": "published"
+        }
+      ],
+      "meshMapperRegions": [
+        "AAA"
+      ]
+    },
+    {
+      "name": "yyz",
+      "label": "Toronto",
+      "sources": [
+        {
+          "label": "Region reference",
+          "url": "https://example.org/scopes",
+          "status": "published"
+        }
+      ],
+      "meshMapperRegions": [
+        "AAA"
+      ]
+    },
+    {
+      "name": "ca",
+      "label": "ca",
+      "sources": [
+        {
+          "label": "Repeater scope report",
+          "url": "https://example.org/scopes",
+          "status": "reported"
+        }
+      ],
+      "meshMapperRegions": [
+        "AAA"
+      ]
+    },
+    {
+      "name": "can",
+      "label": "Canada",
+      "sources": [
+        {
+          "label": "Community guide",
+          "url": "https://example.org/scopes",
+          "status": "published"
+        }
+      ],
+      "meshMapperRegions": []
+    }
+  ],
+  "meshMapper": {
+    "status": "ready",
+    "fetchedAt": "2026-10-28T19:58:00Z",
+    "checkedAt": "2026-10-28T19:58:00Z",
+    "partial": false,
+    "regions": [],
+    "scopes": [],
+    "repeaters": [
+      {
+        "publicKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "name": "Canadian fixture relay",
+        "location": {
+          "lat": 43.45,
+          "lon": -79.5,
+          "reportedAt": null
+        },
+        "lastHeardAt": "2026-10-28T19:50:00Z",
+        "sourceRegions": [
+          "AAA"
+        ],
+        "scopes": [
+          {
+            "name": "onny",
+            "observedAt": "2026-10-28T19:54:00Z",
+            "observedPackets": 5,
+            "proof": "multibyte",
+            "reportedAt": "2026-10-28T18:00:00Z",
+            "uploadedAt": "2026-10-28T17:00:00Z"
+          }
+        ],
+        "defaultScope": "ykf",
+        "defaultScopeState": "named",
+        "defaultScopeAt": "2026-10-28T19:50:00Z",
+        "defaultScopeSource": "advert",
+        "scopesCheckedAt": "2026-10-28T18:00:00Z"
+      }
+    ]
   }
 }

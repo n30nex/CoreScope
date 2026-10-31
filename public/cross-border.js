@@ -9,7 +9,27 @@
   var QUERY_FILTERS = ['localIata', 'peerIata', 'scope', 'windowMinutes'];
   var dashboardAPI = typeof CrossBorderDashboard !== 'undefined' ? CrossBorderDashboard :
     (typeof module !== 'undefined' && module.exports && typeof require === 'function' ? require('./cross-border-dashboard') : null);
+  var flowAPI = typeof CrossBorderFlow !== 'undefined' ? CrossBorderFlow :
+    (typeof module !== 'undefined' && module.exports && typeof require === 'function' ? require('./cross-border-flow') : null);
   function dataKey(filters) { return JSON.stringify(QUERY_FILTERS.map(function (key) { return filters[key]; })); }
+  var REGION_LABELS = { YKF:'Waterloo', YYZ:'Toronto', YHM:'Hamilton', YCM:'Niagara', YLK:'Barrie', XPH:'Port Hope',
+    BUF:'Buffalo', ROC:'Rochester', SYR:'Syracuse', YGK:'Kingston', YOW:'Ottawa–Gatineau', YUL:'Montréal' };
+  function regionLabel(code, regions) {
+    code=String(code||'');if(!/^[A-Z0-9]{3}$/.test(code))return code;
+    var option=(Array.isArray(regions)?regions:[]).slice(0,500).find(function(r){return r && r.iata===code;});
+    var label=String(option && option.label || '');
+    if(!label || label===code) label=REGION_LABELS[code] || code;
+    return label===code || new RegExp('\\b'+code+'\\b').test(label) ? label : label+' ('+code+')';
+  }
+  function regionChoices(regions, selected) {
+    var selectedCodes=new Set(String(selected || '').split(',').map(function(s){return s.trim().toUpperCase();}));
+    var unique=new Map();
+    (Array.isArray(regions)?regions:[]).slice(0,500).forEach(function(row){
+      if(!row || typeof row.iata!=='string' || !/^[A-Z0-9]{3}$/.test(row.iata) || selectedCodes.has(row.iata) || unique.has(row.iata))return;
+      unique.set(row.iata,{iata:row.iata,label:regionLabel(row.iata,[row])});
+    });
+    return Array.from(unique.values()).sort(function(a,b){return a.label.localeCompare(b.label);});
+  }
 
   function normalizeFilters(input) {
     input = input || {};
@@ -23,11 +43,20 @@
       scope: String(input.scope || 'all'), windowMinutes: WINDOWS.indexOf(minutes) >= 0 ? minutes : '',
       packet: String(input.packet || ''), quality: input.quality === '1' ? '1' : ''
     };
-    ['evidence', 'live'].forEach(function (key) { if (input[key] === '0' || input[key] === '1') result[key] = input[key]; });
+    ['evidence', 'live', 'sources', 'advancedRegions'].forEach(function (key) { if (input[key] === '0' || input[key] === '1') result[key] = input[key]; });
     if (input.repeater) result.repeater = String(input.repeater).slice(0, 80);
     if (input.node) result.node = String(input.node).slice(0, 140);
     if (Number(input.repeaterPage) > 0) result.repeaterPage = String(Math.min(39, Math.floor(Number(input.repeaterPage))));
     if (input.tab != null && dashboardAPI) result.tab = dashboardAPI.normalizeTab(String(input.tab));
+    if (input.direction != null) result.direction = input.direction === 'ca_us' || input.direction === 'us_ca' ? input.direction : 'both';
+    if (input.path) result.path = String(input.path).slice(0, 160);
+    if (input.scopeSearch) result.scopeSearch = String(input.scopeSearch).slice(0, 64);
+    if (input.lat != null && input.lon != null && input.lat !== '' && input.lon !== '') {
+      var lat = Number(input.lat), lon = Number(input.lon), zoom = Number(input.zoom || 8);
+      if (Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && Number.isFinite(zoom)) {
+        result.lat = String(lat); result.lon = String(lon); result.zoom = String(Math.min(19, Math.max(2, zoom)));
+      }
+    }
     return result;
   }
 
@@ -80,6 +109,10 @@
       if (data.dashboard.identityComplete === false) notes.push('Observer identity check incomplete for regional matches.');
       if (sourceRows.some(function (source) { return source.status === 'stale'; })) notes.push('One or more sources contain stale evidence.');
       if (sourceRows.some(function (source) { return source.latestAfterSnapshotAt != null; })) notes.push('Observations after the snapshot cutoff were excluded; refresh to compare current evidence.');
+      if(flowAPI)notes=notes.concat(flowAPI.scopeLimitMessages(data));
+      if(data.dashboard.flow && data.dashboard.flow.identityComplete===false)notes.push('Repeater identity coverage is incomplete for cross-border paths.');
+      var detailOnlyLimit=complete.packetsTruncated===true || complete.peerRepeatersTruncated===true;
+      if(!notes.length && !detailOnlyLimit && (data.status==='partial' || complete.complete===false))notes.push('Some comparison evidence is incomplete.');
       return notes.length ? 'Partial comparison. ' + notes.join(' ') : '';
     }
     if (data.status === 'partial' || complete.complete === false) notes.push('Partial comparison.');
@@ -95,7 +128,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { normalizeFilters, dataKey, numberLabel, scopeLabel, ageAt, uniqueRows, qualityNotice };
+    module.exports = { normalizeFilters, dataKey, numberLabel, scopeLabel, ageAt, uniqueRows, qualityNotice, regionLabel, regionChoices };
   }
   if (typeof registerPage !== 'function') return;
 
@@ -143,21 +176,21 @@
   }
   function pageHtml() {
     return '<div class="cb-page analytics-page">' +
-      '<header class="cb-header analytics-header"><div><a href="#/tools">Tools</a><h1>Border links</h1>' +
-      '<p id="cb-intro">Compare path widths, scopes and radio airtime across the border.</p></div>' +
+      '<header class="cb-header analytics-header"><div><a href="#/tools">Tools</a><h1>Cross-border traffic</h1>' +
+      '<p id="cb-intro">Canada ↔ USA · See where packets cross, which scopes they use, and which repeaters carry them.</p></div>' +
       '<div class="cb-live-controls"><label><input type="checkbox" id="cb-live" checked> Live updates · every minute</label><button type="button" id="cb-refresh">Refresh</button></div></header>' +
       '<p id="cb-status" role="status" aria-live="polite">Loading peer telemetry…</p>' +
       '<form id="cb-filters" class="cb-filters" aria-label="Border link filters">' +
-      '<label>US / peer regions<input id="cb-peer" name="peerIata" list="cb-peer-options" placeholder="Operator default" maxlength="160" autocomplete="off"></label>' +
-      '<datalist id="cb-peer-options"></datalist>' +
-      '<label>Canadian regions<input id="cb-local" name="localIata" list="cb-local-options" placeholder="Operator default" maxlength="160" autocomplete="off"></label>' +
-      '<datalist id="cb-local-options"></datalist>' +
-      '<label>Scope<select id="cb-scope" name="scope"><option value="all">All scopes</option><option value="unscoped">Unscoped</option><option value="unknown">Unknown scope</option></select></label>' +
+      '<div class="cb-region-picker"><label for="cb-local-add">Canadian listener regions</label><div id="cb-local-chips" class="cb-region-chips" aria-label="Selected Canadian regions"></div><select id="cb-local-add" aria-label="Add Canadian listener region"><option value="">Add a region…</option></select></div>' +
+      '<div class="cb-region-picker"><label for="cb-peer-add">US listener regions</label><div id="cb-peer-chips" class="cb-region-chips" aria-label="Selected US regions"></div><select id="cb-peer-add" aria-label="Add US listener region"><option value="">Add a region…</option></select></div>' +
+      '<div class="cb-scope-picker"><label>Find a scope<input id="cb-scope-search" type="search" placeholder="Name or region" maxlength="64" autocomplete="off"></label><label>Scope<select id="cb-scope" name="scope"><option value="all">All scopes</option><option value="unscoped">Unscoped</option><option value="unknown">Scoped · name unresolved</option></select></label></div>' +
       '<label class="cb-window-select" hidden>Window<select id="cb-window" name="windowMinutes"><option value="">Operator default</option></select></label><button type="submit">Apply filters</button>' +
       '<div id="cb-window-pills" class="analytics-time-range cb-window-pills" role="group" aria-label="Comparison time window"></div>' +
-      '<p class="cb-filter-help">Choose region codes from the suggestions, separated by commas. Blank uses the default. Scope filters both overview samples; radio reports include all scopes.</p></form>' +
-      '<div class="cb-sources"><section class="cb-source" aria-labelledby="cb-peer-title"><h2 id="cb-peer-title">US / peer listeners</h2><p id="cb-peer-source"></p></section>' +
-      '<section class="cb-source cb-reference" aria-labelledby="cb-local-title"><h2 id="cb-local-title">Canadian listeners</h2><p id="cb-local-source"></p></section></div>' +
+      '<div id="cb-scope-shortcuts" class="cb-filter-shortcuts" aria-label="Common scopes"></div><p id="cb-scope-context" class="cb-filter-help"></p>' +
+      '<details id="cb-region-advanced" class="cb-region-advanced"><summary>Enter region codes directly</summary><div><label>Canadian region codes<input id="cb-local" name="localIata" list="cb-local-options" placeholder="e.g. YKF,YYZ" maxlength="160" autocomplete="off"></label><datalist id="cb-local-options"></datalist><label>US region codes<input id="cb-peer" name="peerIata" list="cb-peer-options" placeholder="e.g. BUF,ROC,SYR" maxlength="160" autocomplete="off"></label><datalist id="cb-peer-options"></datalist></div></details>' +
+      '<p class="cb-filter-help">Regions select listener sources. Choose regions and a scope, then Apply filters. Radio load includes all scopes.</p></form>' +
+      '<details id="cb-source-details" class="cb-source-details"><summary>Listener sources and freshness</summary><div class="cb-sources"><section class="cb-source" aria-labelledby="cb-peer-title"><h2 id="cb-peer-title">US / peer listeners</h2><p id="cb-peer-source"></p></section>' +
+      '<section class="cb-source cb-reference" aria-labelledby="cb-local-title"><h2 id="cb-local-title">Canadian listeners</h2><p id="cb-local-source"></p></section></div></details>' +
       '<div id="cb-results" hidden><p id="cb-quality-warning" class="cb-warning" role="status" hidden></p>' +
       (typeof CrossBorderDashboard !== 'undefined' ? CrossBorderDashboard.html() : '<p class="cb-warning">The dashboard could not load. Inspect the saved evidence below.</p>') +
       '<details id="cb-evidence" class="cb-evidence-disclosure"><summary>Inspect packet and metadata evidence</summary><p class="cb-note">Packet details include Canadian matches in other scopes to help trace the same content.</p><p id="cb-detail-quality-warning" class="cb-note" hidden></p><dl class="cb-summary">' +
@@ -245,10 +278,48 @@
       scope.add(new Option(state.filters.scope, state.filters.scope));
     }
     scope.value = state.filters.scope;
+    state.el('cb-scope-search').value = state.filters.scopeSearch || '';
     state.el('cb-quality').open = state.filters.quality === '1';
     state.el('cb-evidence').open = state.filters.evidence === '1' || Boolean(state.filters.packet);
     state.el('cb-live').checked = state.filters.live !== '0';
+    state.el('cb-source-details').open=state.filters.sources==='1';
+    state.el('cb-region-advanced').open=state.filters.advancedRegions==='1';
+    regionControls(state);
     windowPills(state);
+  }
+  function regionControls(state) {
+    var opts=state.data && state.data.options || {};
+    ['local','peer'].forEach(function(side){
+      var field=state.el('cb-'+side), supplied=array(opts[side+'Regions']).slice(0,500);
+      var labels=new Map(supplied.map(function(row){return [row.iata,regionLabel(row.iata,[row])];}));
+      var selected=Array.from(new Set(String(field.value||'').split(',').map(function(s){return s.trim().toUpperCase();}).filter(function(code){return /^[A-Z0-9]{3}$/.test(code);}))).slice(0,128);
+      var chips=state.el('cb-'+side+'-chips'), existing=new Map(Array.from(chips.children).map(function(button){return [button.dataset.regionCode,button];}));
+      selected.forEach(function(code,index){
+        var button=existing.get(code);if(!button){button=document.createElement('button');button.type='button';button.dataset.regionSide=side;button.dataset.regionCode=code;}
+        var label=labels.get(code)||regionLabel(code,[]);text(button,label+' ×');button.setAttribute('aria-label','Remove '+label+' from '+(side==='local'?'Canadian':'US')+' listener regions');
+        if(chips.children[index]!==button)chips.insertBefore(button,chips.children[index]||null);existing.delete(code);
+      });existing.forEach(function(button){button.remove();});
+      var select=state.el('cb-'+side+'-add'), choices=regionChoices(supplied,field.value);
+      options(select,[{iata:'',label:selected.length?'Add a region…':'Use defaults or add a region…'}].concat(choices),'iata','label','');
+      select.disabled=!choices.length;
+    });
+  }
+  function scopeControls(state) {
+    var data = state.data || {}, opts = data.options || {}, query = state.filters.scopeSearch || '';
+    var catalog = typeof CrossBorderFlow !== 'undefined' ? CrossBorderFlow.catalogRows(data, query) : [];
+    var known = new Set(catalog.map(function (item) { return item.filterValue; }));
+    var scopeOptions = array(opts.scopes).filter(function (item) { return ['all', 'unscoped', 'unknown'].indexOf(item.value) >= 0 || !query || known.has(item.value); });
+    var optionNames = new Set(scopeOptions.map(function (item) { return item.value; }));
+    catalog.forEach(function (item) { if (!optionNames.has(item.filterValue)) scopeOptions.push({ value: item.filterValue, label: item.name + (item.label !== item.name ? ' · ' + item.label : '') }); });
+    options(state.el('cb-scope'), scopeOptions, 'value', 'label', state.filters.scope);
+    state.el('cb-scope-context').hidden=state.filters.scope==='all';
+    var all = typeof CrossBorderFlow !== 'undefined' ? CrossBorderFlow.catalogRows(data, '') : [], selected = all.find(function (item) { return item.filterValue === state.filters.scope; });
+    text(state.el('cb-scope-context'), selected ? selected.name + ' · ' + selected.evidence : state.filters.scope === 'all' ? 'All scopes, including unnamed scoped packets and unscoped traffic.' : state.filters.scope === 'unknown' ? 'A transport scope is present, but its name is unresolved.' : state.filters.scope === 'unscoped' ? 'No named transport scope. Transport wildcard evidence is identified separately.' : 'No catalog information for this scope.');
+    var shortcuts = state.el('cb-scope-shortcuts'), common = ['all', 'onny', 'onqc', 'ykf', 'yyz', 'us-ny', 'unscoped'];
+    var knownNames = new Set(all.map(function (item) { return item.name; }));
+    common = common.filter(function (name) { return name === 'all' || name === 'unscoped' || knownNames.has(name); });
+    var existing = new Map(Array.from(shortcuts.children).map(function (button) { return [button.dataset.scopeChoice, button]; }));
+    common.forEach(function (name,index) { var button=existing.get(name); if(!button){button=document.createElement('button');button.type='button';button.dataset.scopeChoice=name;} text(button,name==='all'?'All scopes':name==='unscoped'?'Unscoped':name);button.setAttribute('aria-pressed',String(state.filters.scope===name));if(shortcuts.children[index]!==button)shortcuts.insertBefore(button,shortcuts.children[index]||null);existing.delete(name); });existing.forEach(function(button){button.remove();});
   }
   function windowPills(state) {
     var node = state.el('cb-window-pills'), selected = String(state.filters.windowMinutes);
@@ -335,7 +406,7 @@
     var updated = data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Unknown';
     var status = data.dashboard && data.enabled ? (qualityNotice(data) ? 'Partial comparison' : 'Comparison ready') : statuses[data.status] || 'Comparison status unknown';
     text(el('cb-status'), status + ' · Updated ' + updated);
-    text(el('cb-intro'), 'Compare path widths, scopes and radio airtime by where traffic was heard. The same repeater can appear in both feeds; own adverts show the width it originates, while carried widths can differ.');
+    text(el('cb-intro'), 'Canada ↔ USA · See where packets cross, which scopes they use, and which repeaters carry them.');
     text(el('cb-peer-source'), sourceText(sources.peer, data.generatedAt));
     text(el('cb-local-source'), sourceText(sources.local, data.generatedAt));
     text(el('cb-peer-quality'), sourceQuality(sources.peer));
@@ -372,7 +443,8 @@
     var opts = data.options || {};
     options(el('cb-local-options'), opts.localRegions, 'iata', 'label');
     options(el('cb-peer-options'), opts.peerRegions, 'iata', 'label');
-    options(el('cb-scope'), opts.scopes, 'value', 'label', state.filters.scope);
+    regionControls(state);
+    scopeControls(state);
     var windows = array(opts.windowMinutes).map(Number).filter(function (minutes) { return WINDOWS.indexOf(minutes) >= 0; }).map(function (minutes) {
       return { value: String(minutes), label: windowLabel(minutes) };
     });
@@ -475,14 +547,15 @@
     controls(state);
     if (typeof CrossBorderDashboard !== 'undefined') state.dashboard = CrossBorderDashboard.mount(state.el('cb-dashboard'), {
       onPair: function (local, peer) { state.filters = normalizeFilters(Object.assign({}, state.filters, { localIata: local, peerIata: peer, packet: '', node: '', repeaterPage: '' })); setHash(state, false); controls(state); load(state); },
-      onView: function (change, replace) { state.filters = normalizeFilters(Object.assign({}, state.filters, change)); setHash(state, Boolean(replace)); }
+      onView: function (change, replace) { state.filters = normalizeFilters(Object.assign({}, state.filters, change)); setHash(state, Boolean(replace)); },
+      onScope: function (scope) { state.el('cb-scope').value=scope; if (state.el('cb-scope').value !== scope) state.el('cb-scope').add(new Option(scope,scope)); state.el('cb-scope').value=scope; state.el('cb-filters').requestSubmit(); }
     });
     state.submit = function (event) {
       event.preventDefault();
       var filters = normalizeFilters(Object.assign({}, state.filters, { localIata: state.el('cb-local').value, peerIata: state.el('cb-peer').value,
-        scope: state.el('cb-scope').value, windowMinutes: state.el('cb-window').value, packet: '', node: '', repeaterPage: '' }));
-      if ([filters.localIata, filters.peerIata].some(function (value) { return value && !/^[A-Z]{3}(,[A-Z]{3})*$/.test(value); })) {
-        text(state.el('cb-status'), 'Enter three-letter IATA codes separated by commas, or leave blank for the operator default.');
+        scope: state.el('cb-scope').value, windowMinutes: state.el('cb-window').value, packet: '', path: '', node: '', repeaterPage: '' }));
+      if ([filters.localIata, filters.peerIata].some(function (value) { return value && !/^[A-Z0-9]{3}(,[A-Z0-9]{3})*$/.test(value); })) {
+        text(state.el('cb-status'), 'Enter three-character IATA codes separated by commas, or leave blank for the operator default.');
         return;
       }
       state.filters = filters; setHash(state, false); controls(state); load(state);
@@ -492,6 +565,8 @@
       if (!button || !container.contains(button)) return;
       if (button.dataset.window) { state.el('cb-window').value = button.dataset.window; state.el('cb-filters').requestSubmit(); return; }
       if (button.id === 'cb-refresh') { load(state); return; }
+      if (button.dataset.regionSide && button.dataset.regionCode) { var field=state.el('cb-'+button.dataset.regionSide);field.value=String(field.value).split(',').filter(function(code){return code.trim().toUpperCase()!==button.dataset.regionCode;}).join(',');regionControls(state);return; }
+      if (button.dataset.scopeChoice && state.el('cb-filters').contains(button)) { if (!Array.from(state.el('cb-scope').options).some(function(option){return option.value===button.dataset.scopeChoice;})) state.el('cb-scope').add(new Option(button.dataset.scopeChoice,button.dataset.scopeChoice));state.el('cb-scope').value=button.dataset.scopeChoice;state.el('cb-filters').requestSubmit();return; }
       if (button.dataset.packet || button.id === 'cb-close-detail') {
         var previous = state.filters.packet;
         state.filters.packet = button.dataset.packet || '';
@@ -504,6 +579,14 @@
       }
     };
     state.el('cb-filters').addEventListener('submit', state.submit);
+    state.scopeSearch = function () { state.filters.scopeSearch=state.el('cb-scope-search').value.slice(0,64);setHash(state,true);scopeControls(state); };
+    state.el('cb-scope-search').addEventListener('input',state.scopeSearch);
+    state.regionAdd=function(event){var side=event.target.id==='cb-local-add'?'local':'peer',code=event.target.value;if(!code)return;var field=state.el('cb-'+side),next=field.value?field.value+','+code:code;if(next.length>160){text(state.el('cb-status'),'Too many selected regions. Remove one before adding another.');return;}field.value=next;regionControls(state);};
+    state.el('cb-local-add').addEventListener('change',state.regionAdd);state.el('cb-peer-add').addEventListener('change',state.regionAdd);
+    state.advancedToggle=function(){if(state!==active)return;var value=state.el('cb-region-advanced').open?'1':'0';if((state.filters.advancedRegions||'0')!==value){state.filters.advancedRegions=value;setHash(state,false);}};
+    state.el('cb-region-advanced').addEventListener('toggle',state.advancedToggle);
+    state.sourceToggle=function(){if(state!==active)return;var value=state.el('cb-source-details').open?'1':'0';if((state.filters.sources||'0')!==value){state.filters.sources=value;setHash(state,false);}};
+    state.el('cb-source-details').addEventListener('toggle',state.sourceToggle);
     state.toggleQuality = function () {
       if (state !== active) return;
       var quality = state.el('cb-quality').open ? '1' : '';
@@ -539,6 +622,10 @@
     state.el('cb-live').removeEventListener('change', state.live);
     document.removeEventListener('visibilitychange', state.visibility);
     state.el('cb-filters').removeEventListener('submit', state.submit);
+    state.el('cb-scope-search').removeEventListener('input',state.scopeSearch);
+    state.el('cb-local-add').removeEventListener('change',state.regionAdd);state.el('cb-peer-add').removeEventListener('change',state.regionAdd);
+    state.el('cb-region-advanced').removeEventListener('toggle',state.advancedToggle);
+    state.el('cb-source-details').removeEventListener('toggle',state.sourceToggle);
     state.el('cb-quality').removeEventListener('toggle', state.toggleQuality);
     state.root.removeEventListener('click', state.click);
     state.data = {}; state.packetRows = [];
@@ -546,11 +633,11 @@
   function updateRoute() {
     var state = active;
     if (!state || !state.data.filters) return false;
-    var parsed = URLState.parseHash(location.hash), allowed = QUERY_FILTERS.concat(['packet', 'quality', 'evidence', 'live', 'repeater', 'repeaterPage', 'node', 'tab']);
+    var parsed = URLState.parseHash(location.hash), allowed = QUERY_FILTERS.concat(['packet', 'quality', 'evidence', 'live', 'repeater', 'repeaterPage', 'node', 'tab', 'direction', 'path', 'scopeSearch', 'lat', 'lon', 'zoom', 'sources', 'advancedRegions']);
     if (parsed.route !== 'cross-border' || Object.keys(parsed.params).some(function (key) { return allowed.indexOf(key) < 0; })) return false;
     var next = normalizeFilters(parsed.params);
     if (dataKey(next) !== dataKey(state.filters) || dataKey(next) !== dataKey(normalizeFilters(state.data.filters))) return false;
-    state.filters = next; controls(state); renderEvidence(state);
+    state.filters = next; controls(state); scopeControls(state); renderEvidence(state);
     if (state.dashboard) state.dashboard.setView(next); schedule(state);
     return true;
   }

@@ -25,7 +25,7 @@ const BASE = SERVED ? loopbackOrigin(process.env.BASE_URL) : 'http://127.0.0.1:1
 // Validate the target before loading or launching any browser dependency.
 const { chromium } = require('playwright');
 const SHELL_SCRIPTS = new Set(['payload-labels.js', 'roles.js', 'cb-presets.js', 'customize-v2.js',
-  'region-filter.js', 'area-filter.js', 'app.js', 'url-state.js', 'bottom-nav.js', 'nav-drawer.js', 'cross-border-dashboard.js', 'cross-border.js']);
+  'region-filter.js', 'area-filter.js', 'app.js', 'url-state.js', 'bottom-nav.js', 'nav-drawer.js', 'map-tile-providers.js', 'cross-border-flow.js', 'cross-border-dashboard.js', 'cross-border.js']);
 const clone = value => JSON.parse(JSON.stringify(value));
 
 (async () => {
@@ -61,7 +61,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
     await context.route('**/*', async route => {
       const url = new URL(route.request().url());
       if (SERVED && (url.origin !== BASE || url.pathname !== '/api/cross-border')) return route.continue();
-      if (url.href.startsWith('https://unpkg.com/chart.js@4.5.1/')) return route.continue();
+      if (url.href.startsWith('https://unpkg.com/chart.js@4.5.1/') || url.href.startsWith('https://unpkg.com/leaflet@1.9.4/')) return route.continue();
       if (url.origin !== BASE) return route.fulfill({ body: '', contentType: 'text/plain' });
       if (url.pathname === '/api/cross-border') {
         calls.push(url.searchParams);
@@ -94,6 +94,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
           data.sources.peer.status = data.sources.local.status = mode === 'empty' ? 'empty' : mode;
           data.sources.peer.latestObservationAt = data.sources.local.latestObservationAt = null;
           data.status = mode === 'empty' ? 'ready' : mode;
+          data.dashboard.flow.status = mode === 'empty' ? 'empty' : 'unavailable';data.dashboard.flow.paths=[];data.dashboard.flow.directions.forEach(d=>Object.assign(d,{contents:0,scoped:0,unscoped:0,mixed:0,transportWildcard:0,unknownScopeName:0,repeaters:0,furthestKm:null,timeline:[]}));
           if (mode === 'disabled') data.enabled = false;
           ['local', 'peer'].forEach(side => { Object.assign(data.dashboard[side], {status: mode === 'empty' ? 'empty' : 'unavailable', records:0, contents:0, floodRecords:0, widths:[], timeline:[], scopes:[], regions:[], repeaters:[], radio:{status:'empty',txAirtimePct:null,rxAirtimePct:null,reportingObservers:0,observers:[]} }); });
         }
@@ -109,14 +110,28 @@ const clone = value => JSON.parse(JSON.stringify(value));
           data.dashboard.local.status = 'unavailable'; data.dashboard.local.radio.status = 'unavailable'; data.dashboard.local.radio.txAirtimePct = null; data.dashboard.local.radio.rxAirtimePct = null; data.dashboard.local.radio.observers = [];
         }
         if (mode === 'stale') data.sources.peer.status = 'stale';
+        if (mode === 'mapper-denied') data.meshMapper={status:'access_denied',fetchedAt:null,partial:true,regions:[],repeaters:[],scopes:[]};
+        if (mode === 'mapper-stale') data.meshMapper.status='stale';
+        if (mode === 'mapper-rate-limited') data.meshMapper.status='rate_limited';
+        if (mode === 'mapper-loading') data.meshMapper={status:'loading',fetchedAt:null,partial:true,regions:[],repeaters:[],scopes:[]};
         if (mode === 'scope-shift') ['local', 'peer'].forEach(side => { data.dashboard[side].scopes.forEach((scope, index) => { scope.records = 50 - index * 7; }); });
         if (mode === 'region-pairs-cap') { data.status = 'partial'; data.dashboard.regionPairsTruncated = true; }
         if (mode === 'radio-cap-local' || mode === 'radio-cap-peer') { data.status = 'partial'; data.dashboard[mode.endsWith('local') ? 'local' : 'peer'].radio.truncated = true; }
         if (mode === 'detail-only-cap') { data.status = 'partial'; data.completeness.complete = false; data.completeness.packetsTruncated = true; }
+        if (mode === 'scope-match-cap' || mode === 'scope-catalog-cap' || mode === 'unexplained-partial') {
+          data.status='partial';data.completeness.complete=false;
+          if(mode==='scope-match-cap')data.scopeResolution={limited:true};
+          if(mode==='scope-catalog-cap')data.scopeCatalogTruncated=true;
+        }
         if (mode === 'identity-unverified') {
           data.packets[0].overlap = 'identity_unverified';
           data.summary.identityUnverifiedPackets = 1;
           data.summary.independentSharedPackets = 0; data.dashboard.identityComplete = false;
+        }
+        if(mode==='flow-identity-incomplete') {
+          data.status='partial';data.completeness.complete=false;data.dashboard.flow.status='partial';data.dashboard.flow.identityComplete=false;
+          data.dashboard.flow.paths=[];data.dashboard.flow.repeaters=[];
+          data.dashboard.flow.directions.forEach(direction=>{Object.assign(direction,{contents:0,scoped:0,unknownScopeName:0,unscoped:0,transportWildcard:0,mixed:0,repeaters:0,furthestKm:null});direction.timeline.forEach(point=>{point.contents=0;point.complete=true;});});
         }
         if (mode === 'shared-feed-identity') {
           data.packets[0].overlap = 'shared_feed_identity';
@@ -153,7 +168,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       if (url.pathname === '/') {
         let html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
         html = html.replace(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>[\s\S]*?<\/script>/g,
-          (tag, src) => SHELL_SCRIPTS.has(src.split('?')[0]) || src.startsWith('https://unpkg.com/chart.js@4.5.1/') ? tag : '');
+          (tag, src) => SHELL_SCRIPTS.has(src.split('?')[0]) || (src.startsWith('https://unpkg.com/chart.js@4.5.1/') || src.startsWith('https://unpkg.com/leaflet@1.9.4/')) ? tag : '');
         return route.fulfill({ body: html, contentType: 'text/html' });
       }
       const file = path.resolve(PUBLIC, '.' + url.pathname);
@@ -166,12 +181,21 @@ const clone = value => JSON.parse(JSON.stringify(value));
     const ready = () => page.waitForFunction(() => { const el = document.querySelector('#cb-results'); return el && !el.hasAttribute('aria-busy'); });
     async function apply(values) {
       if (values.scope != null) await page.selectOption('#cb-scope', values.scope);
+      if ((values.peer != null || values.local != null) && !(await page.locator('#cb-region-advanced').evaluate(node=>node.open))) await page.locator('#cb-region-advanced > summary').click();
       if (values.peer != null) await page.fill('#cb-peer', values.peer);
       if (values.local != null) await page.fill('#cb-local', values.local);
       if (values.window != null) await page.locator('#cb-window-pills button[data-window="' + values.window + '"]').click();
       else await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
     }
     async function tab(name) { await page.getByRole('tab', { name: name, exact: true }).click(); }
+    async function drawnPaths() {
+      await page.waitForFunction(() => Array.from(document.querySelectorAll('#cb-flow-map .leaflet-overlay-pane canvas')).some(canvas => {
+        if (!canvas.width || !canvas.height) return false;
+        const pixels=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
+        for(let i=3;i<pixels.length;i+=4)if(pixels[i]>0)return true;
+        return false;
+      }));
+    }
     async function releasePending() {
       const items = pending; pending = [];
       for (const item of items) { await item.route.fulfill({ json: item.data }); item.resolve(); }
@@ -179,7 +203,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
     async function saveCoverage() {
       if (!SERVED) return;
       const coverage = await page.evaluate(() => {
-        const entries = Object.entries(window.__coverage__ || {}).filter(([key, value]) => /(^|[\\/])cross-border(?:-dashboard)?\.js$/.test(value.path || key));
+        const entries = Object.entries(window.__coverage__ || {}).filter(([key, value]) => /(^|[\\/])cross-border(?:-dashboard|-flow)?\.js$/.test(value.path || key));
         return entries.length ? Object.fromEntries(entries) : null;
       });
       if (!coverage) return;
@@ -218,7 +242,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.match(await page.locator('section[aria-labelledby="cb-observers-title"]').innerText(), /latest broker string[\s\S]*hardware or a profile[\s\S]*does not verify per-packet settings/);
       assert.match(await page.locator('#cb-findings').textContent(), /Reported radio metadata[\s\S]*hardware or a profile[\s\S]*does not verify per-packet settings/);
       assert.match(await page.locator('#cb-observers').innerText(), /Reported: Unknown/);
-      assert.strictEqual(await page.locator('.cb-page img').count(), 0);
+      assert.strictEqual(await page.locator('.cb-page img[src="x"]').count(), 0);
       assert.match(await page.locator('#cb-packets').innerText(), /Match · distinct observers/);
       assert.match(await page.locator('#cb-packets').innerText(), /Match · same observer present/);
       assert.strictEqual(await page.locator('#cb-local-count').innerText(), '2');
@@ -229,9 +253,103 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.strictEqual(await page.locator('#cb-peer-profile a').getAttribute('href'), 'https://example.org/radio-profile');
       assert.match(await page.locator('#cb-peer-profile').textContent(), /not device measurements/);
     });
+    await check('crossings lead with direction, scoped shares and an actual Leaflet map', async () => {
+      assert.strictEqual(await page.getByRole('tab', {name:'Crossings', exact:true}).getAttribute('aria-selected'), 'true');
+      assert.strictEqual(await page.locator('#cb-flow-ca_us-count').innerText(), '2');
+      assert.strictEqual(await page.locator('#cb-flow-us_ca-count').innerText(), '2');
+      assert.strictEqual(await page.locator('#cb-flow-ca_us-scoped').innerText(), '50%');
+      assert.strictEqual(await page.locator('#cb-flow-us_ca-scoped').innerText(), '50%');
+      assert.match(await page.locator('#cb-flow-status').innerText(), /1 with no crossing in resolved paths.*2 with crossing unresolved/);
+      await page.waitForFunction(() => window.L && document.querySelector('#cb-flow-map.leaflet-container') && Chart.getChart('cb-flow-timeline').width > 100);
+      assert.strictEqual(await page.evaluate(() => L.version), '1.9.4');
+      assert(await page.locator('#cb-flow-map canvas').count() > 0);
+      await drawnPaths();
+      assert.deepStrictEqual(await page.evaluate(() => Chart.getChart('cb-flow-scopes').data.datasets.map(ds=>ds.data)), [[50,0],[0,50],[50,50],[0,0],[0,0]]);
+      assert(await page.evaluate(() => Chart.getChart('cb-flow-timeline').data.datasets.every(ds=>ds.data[0]===null && ds.spanGaps===false)));
+      assert(await page.locator('.cb-overview-metrics').isHidden(), 'feed totals do not masquerade as national crossings');
+      assert(await page.locator('.cb-flow-map-section').evaluate(node=>node.getBoundingClientRect().top+window.scrollY<900),'the map section should follow compact cards without a repeated heading');
+      assert(!(await page.locator('#cb-region-advanced').evaluate(node=>node.open)),'CSV entry is not the default region picker');
+    });
+    await check('path and direction controls reuse the snapshot and preserve unresolved hops', async () => {
+      const before=calls.length;
+      await page.locator('[data-direction="us_ca"]').click();
+      assert.match(page.url(), /direction=us_ca/);
+      assert.strictEqual(await page.locator('#cb-flow-path-list button').count(), 2);
+      await page.locator('#cb-flow-path-list [data-path="crossing-us-ca"]').focus();await page.keyboard.press('Enter');
+      assert.match(page.url(), /path=crossing-us-ca/);
+      assert.match(await page.locator('#cb-flow-detail-summary').innerText(), /name unresolved|Packet/);
+      assert.match(await page.locator('#cb-flow-hop-list').innerText(), /Repeater could not be identified.*pathway stops here/);
+      assert.match(await page.locator('#cb-flow-detail-summary').innerText(), /Airtime: Unavailable/);
+      assert.strictEqual(await page.locator('#cb-flow-hop-list li').count(), 4);
+      await page.locator('[data-direction="both"]').click();
+      await page.locator('#cb-flow-path-list [data-path="crossing-ca-us"]').click();
+      assert.match(await page.locator('#cb-flow-detail-summary').innerText(), /230.1 ms estimated.*one saved frame/);
+      assert.match(await page.locator('#cb-flow-detail-title').innerText(),/onny.*matched against known names/);
+      await page.locator('#cb-flow-hop-list details').first().locator('summary').click();
+      const evidence=await page.locator('#cb-flow-hop-list details').first().innerText();
+      assert.match(evidence,/queried/);assert.match(evidence,/uploaded/);assert.match(evidence,/forwarding inferred/);
+      assert.strictEqual(calls.length,before,'local map/detail controls must not fetch per packet or repeater');
+      await page.click('#cb-flow-clear');
+      assert(!page.url().includes('path='));
+    });
+    await check('known scope choices remain searchable with zero traffic and keep ca separate from can', async () => {
+      const before=calls.length;
+      await page.fill('#cb-scope-search','Waterloo');
+      assert.match(page.url(),/scopeSearch=Waterloo/);
+      assert(await page.locator('#cb-scope option[value="ykf"]').count());
+      assert.strictEqual(calls.length,before);
+      await page.fill('#cb-scope-search','');
+      assert(await page.locator('#cb-scope option[value="ca"]').count());
+      assert(await page.locator('#cb-scope option[value="can"]').count());
+      await tab('Scopes & regions');
+      assert.match(await page.locator('#cb-catalog-list [data-scope="onqc"]').innerText(),/proposed/);
+      mode='empty';await page.click('#cb-refresh');await ready();
+      assert(await page.locator('#cb-scope option[value="onqc"]').count());
+      await tab('Crossings');
+      assert.strictEqual(await page.locator('#cb-flow-ca_us-scoped').innerText(),'—');
+      assert.match(await page.locator('#cb-flow-path-count').innerText(),/does not prove that no packets crossed/);
+      mode='normal';await page.click('#cb-refresh');await ready();
+    });
+    await check('denied MeshMapper metadata does not hide local crossing analysis', async () => {
+      mode='mapper-denied';await page.click('#cb-refresh');await ready();
+      assert.strictEqual(await page.locator('#cb-flow-ca_us-count').innerText(),'2');
+      await page.locator('#cb-flow-path-list [data-path="crossing-ca-us"]').click();
+      await page.locator('#cb-flow-hop-list details').first().locator('summary').click();
+      assert.match(await page.locator('#cb-flow-hop-list').innerText(),/MeshMapper scope report unavailable/);
+      await tab('Scopes & regions');assert.match(await page.locator('#cb-catalog-status').innerText(),/access not permitted/);
+      mode='normal';await page.click('#cb-refresh');await ready();await tab('Crossings');
+    });
+    await check('MeshMapper provider ready, stale, loading and rate-limited states never become an unknown status', async () => {
+      await tab('Scopes & regions');
+      for(const [nextMode,label] of [['normal','available'],['mapper-stale','stale cached data'],['mapper-loading','loading'],['mapper-rate-limited','rate limited; cached data may be shown']]) {
+        mode=nextMode;await page.click('#cb-refresh');await ready();
+        const status=await page.locator('#cb-catalog-status').innerText();
+        assert(status.includes('MeshMapper: '+label));
+        assert.doesNotMatch(status,/status unknown/);
+        assert.strictEqual(await page.locator('#cb-flow-ca_us-count').textContent(),'2','metadata state must not erase local crossing evidence');
+      }
+      mode='normal';await page.click('#cb-refresh');await ready();await tab('Crossings');
+    });
+    await check('region chips add and remove named regions, apply together, and restore through history', async () => {
+      const before=calls.length;
+      await page.selectOption('#cb-local-add','AAD');await page.selectOption('#cb-peer-add','CCC');
+      assert.strictEqual(await page.locator('#cb-local-chips button').count(),2);
+      assert.strictEqual(await page.locator('#cb-peer-chips button').count(),2);
+      assert.match(await page.locator('#cb-local-chips').innerText(),/Additional Canadian area/);
+      assert.strictEqual(calls.length,before,'editing region chips is a draft until Apply filters');
+      await page.getByRole('button',{name:'Apply filters',exact:true}).click();await ready();
+      assert.strictEqual(calls.at(-1).get('localIata'),'AAA,AAD');assert.strictEqual(calls.at(-1).get('peerIata'),'BBB,CCC');
+      assert.match(page.url(),/localIata=AAA%2CAAD/);
+      await page.locator('#cb-local-chips [data-region-code="AAD"]').click();await page.locator('#cb-peer-chips [data-region-code="CCC"]').click();
+      await page.getByRole('button',{name:'Apply filters',exact:true}).click();await ready();
+      assert.strictEqual(calls.at(-1).get('localIata'),'AAA');assert.strictEqual(calls.at(-1).get('peerIata'),'BBB');
+      await page.goBack();await ready();assert.strictEqual(await page.locator('#cb-local-chips button').count(),2);
+      await page.goForward();await ready();assert.strictEqual(await page.locator('#cb-local-chips button').count(),1);
+      assert(!(await page.locator('#cb-region-advanced').evaluate(node=>node.open)));
+    });
     await check('analytics category tabs reuse data, support keyboard history and resize charts', async () => {
       assert.strictEqual(await page.getByRole('tablist', {name:'Cross-border analytics'}).count(), 1);
-      assert.strictEqual(await page.getByRole('tab').count(), 5);
+      assert.strictEqual(await page.getByRole('tab').count(), 6);
       assert.strictEqual(await page.locator('.cb-overview-metrics .stat-card').count(), 4);
       const before = calls.length;
       await page.getByRole('tab', {name:'Hash widths', exact:true}).click();
@@ -248,12 +366,13 @@ const clone = value => JSON.parse(JSON.stringify(value));
       await page.goForward();
       await page.waitForFunction(() => document.querySelector('#cb-tab-scopes-regions').getAttribute('aria-selected') === 'true');
       assert.strictEqual(calls.length, before, 'display categories and history must reuse the loaded response');
-      await page.getByRole('tab', {name:'Overview', exact:true}).click();
-      assert.match(await page.locator('#cb-intro').innerText(), /where traffic was heard.*same repeater can appear in both feeds/i);
+      await page.getByRole('tab', {name:'Listener activity', exact:true}).click();
+      assert.match(await page.locator('#cb-intro').innerText(), /where packets cross.*scopes/i);
+      await page.locator('#cb-activity-chart').waitFor({state:'visible'});
       assert(await page.locator('#cb-activity-chart').isVisible());
     });
     await check('plain-language overview keeps technical details in a keyboard-accessible shareable disclosure', async () => {
-      assert.match(await page.locator('#cb-intro').innerText(), /path widths, scopes and radio airtime/);
+      assert.match(await page.locator('#cb-intro').innerText(), /where packets cross.*scopes/i);
       assert.match(await page.locator('.cb-summary').innerText(), /Matching Canadian packets[\s\S]*Distinct observers · among peer packets/);
       assert(await page.locator('#cb-completeness').isHidden());
       assert(await page.locator('#cb-peer-quality').isHidden());
@@ -291,7 +410,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
     });
     await check('overview scope control preserves separately labelled packet-reference evidence', async () => {
       assert.strictEqual(await page.locator('#cb-scope').evaluate(node => node.labels[0].firstChild.textContent), 'Scope');
-      assert.match(await page.locator('.cb-filter-help').innerText(), /Scope filters both overview samples; radio reports include all scopes/);
+      assert.match(await page.locator('.cb-filter-help').last().innerText(), /Regions select listener sources.*Radio load includes all scopes/);
       await apply({ scope: 'example' }); await ready();
       assert.strictEqual(calls.at(-1).get('scope'), 'example');
       assert.strictEqual(await page.locator('#cb-packets tr').count(), 1);
@@ -322,7 +441,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       const before = calls.length;
       await apply({ peer: 'not-a-code' });
       assert.strictEqual(calls.length, before);
-      assert.match(await page.locator('#cb-status').innerText(), /three-letter IATA/);
+      assert.match(await page.locator('#cb-status').innerText(), /three-character IATA/);
       mode = 'invalid'; await apply({ peer: 'ZZZ' }); await ready();
       assert.match(await page.locator('#cb-status').innerText(), /filter selection is not supported/);
       mode = 'error'; await apply({ peer: 'BBB' }); await ready();
@@ -392,7 +511,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.match(await page.locator('#cb-quality-warning').innerText(), /Partial comparison.*sample limits/);
       assert(await page.locator('#cb-quality-warning').isVisible());
       assert.match(await page.locator('#cb-observer-count').innerText(), /200 of 205/);
-      assert.match(await page.locator('#cb-dashboard-coverage').innerText(), /capped/);
+      assert.match(await page.locator('#cb-dashboard-coverage').textContent(), /capped/);
       assert(await page.evaluate(() => Chart.getChart('cb-local-trend').data.datasets.every(ds => ds.data.slice(0,6).every(value => value === null))));
     });
     await check('shared-feed identities do not claim the same observer reported the packet', async () => {
@@ -416,11 +535,43 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.match(await page.locator('#cb-detail-quality-warning').innerText(), /sample limits/);
       mode = 'normal';
     });
+    await check('scope-name matching and catalog limits cannot present a complete comparison or zero absence', async () => {
+      await tab('Crossings');
+      for(const [nextMode,warning] of [['scope-match-cap',/Scope-name matching is limited.*not proof of no traffic/],['scope-catalog-cap',/scope catalog is limited.*names may be omitted/]]) {
+        mode=nextMode;await page.click('#cb-refresh');await ready();
+        assert.match(await page.locator('#cb-status').innerText(),/Partial comparison/);
+        assert(await page.locator('#cb-quality-warning').isVisible());
+        assert.match(await page.locator('#cb-quality-warning').innerText(),warning);
+        assert.match(await page.locator('#cb-flow-status').innerText(),/Partial path evidence.*Scope-name evidence is incomplete/);
+      }
+      await tab('Scopes & regions');assert.match(await page.locator('#cb-catalog-status').innerText(),/Catalog limited; not all names are listed/);
+      mode='unexplained-partial';await page.click('#cb-refresh');await ready();
+      assert.match(await page.locator('#cb-status').innerText(),/Partial comparison/);
+      assert.match(await page.locator('#cb-quality-warning').innerText(),/comparison evidence is incomplete/);
+      mode='normal';await page.click('#cb-refresh');await ready();await tab('Crossings');
+    });
+    await check('incomplete repeater identity coverage shows unavailable attribution rather than false zero crossings', async () => {
+      await tab('Crossings');mode='flow-identity-incomplete';await page.click('#cb-refresh');await ready();
+      assert.strictEqual(await page.locator('#cb-flow-ca_us-count').innerText(),'—');
+      assert.strictEqual(await page.locator('#cb-flow-us_ca-count').innerText(),'—');
+      assert.strictEqual(await page.locator('#cb-flow-ca_us-scoped').innerText(),'—');
+      assert.match(await page.locator('#cb-flow-status').innerText(),/identity coverage is incomplete/);
+      assert.match(await page.locator('#cb-flow-map-status').innerText(),/identity coverage incomplete/);
+      assert.match(await page.locator('#cb-quality-warning').innerText(),/Repeater identity coverage is incomplete/);
+      assert(await page.evaluate(()=>Chart.getChart('cb-flow-timeline').data.datasets.every(dataset=>dataset.data.every(value=>value===null))));
+      assert.strictEqual(await page.locator('#cb-flow-path-list button').count(),0);
+      mode='empty';await page.click('#cb-refresh');await ready();
+      assert.strictEqual(await page.locator('#cb-flow-ca_us-count').innerText(),'0','complete empty evidence remains a real zero');
+      mode='normal';await page.click('#cb-refresh');await ready();
+    });
     await check('after-snapshot observations show a neutral quality warning and unknown freshness', async () => {
       mode = 'after-snapshot'; await page.click('#cb-refresh'); await ready();
       assert.match(await page.locator('#cb-quality-warning').innerText(), /after the snapshot cutoff/);
+      await page.locator('#cb-source-details > summary').click();
+      await page.waitForFunction(() => location.hash.includes('sources=1'));
       assert.match(await page.locator('#cb-peer-source').innerText(), /Only after-snapshot observations.*\n.*\nLatest observation: Unknown · Age unknown/);
       assert.doesNotMatch(await page.locator('#cb-quality-warning').innerText(), /clock (fault|skew|error)/i);
+      await page.locator('#cb-source-details > summary').click();
       mode = 'normal';
     });
     await check('charts show separate adoption denominators, gaps and distinct scope categories', async () => {
@@ -447,8 +598,10 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.deepStrictEqual(trendValues.slice(2), ['100', '47%', '33%', '20%']);
       assert.strictEqual(await page.locator('#cb-trend-values tr').first().locator('td').nth(2).innerText(), 'Unknown');
       await trendMethod.click();
-      assert.strictEqual(await page.locator('#cb-dashboard canvas').count(), 11);
-      for (const [view, ids] of [['Overview',['cb-activity-chart','cb-local-donut','cb-peer-donut']], ['Hash widths',['cb-advert-chart','cb-width-chart','cb-local-trend','cb-peer-trend']], ['Scopes & regions',['cb-scope-chart']], ['Radio load',['cb-radio-chart']]]) {
+      // Leaflet owns a separate vector canvas; count the actual Chart.js
+      // instances rather than mistaking the map renderer for another chart.
+      assert.strictEqual(await page.evaluate(() => Array.from(document.querySelectorAll('#cb-dashboard canvas')).filter(canvas => Chart.getChart(canvas)).length), 13);
+      for (const [view, ids] of [['Listener activity',['cb-activity-chart','cb-local-donut','cb-peer-donut']], ['Hash widths',['cb-advert-chart','cb-width-chart','cb-local-trend','cb-peer-trend']], ['Scopes & regions',['cb-scope-chart']], ['Radio load',['cb-radio-chart']]]) {
         await tab(view);
         await page.waitForFunction(chartIds => chartIds.every(id => { const chart = Chart.getChart(id); return chart.width > 100 && chart.height > 100; }), ids);
       }
@@ -464,6 +617,14 @@ const clone = value => JSON.parse(JSON.stringify(value));
     await check('repeater matrix searches and drill-downs without another request', async () => {
       await tab('Repeaters');
       const before = calls.length;
+      assert.strictEqual(await page.locator('#cb-border-repeaters tr').count(),2);
+      assert.match(await page.locator('#cb-border-repeaters').innerText(),/Canadian fixture relay/);
+      await page.locator('#cb-border-repeaters button').first().click();
+      assert.strictEqual(await page.getByRole('tab',{name:'Crossings',exact:true}).getAttribute('aria-selected'),'true');
+      assert.match(page.url(),/path=crossing/);
+      assert(await page.locator('#cb-flow-hop-list li').count()>0);
+      assert.strictEqual(calls.length,before);
+      await tab('Repeaters');
       await page.fill('#cb-repeater-search', 'Canadian test repeater 1');
       assert.strictEqual(await page.locator('#cb-carry-rows tr').count(), 1);
       assert.match(page.url(), /repeater=Canadian/);
@@ -507,6 +668,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.strictEqual(calls.length, before + 2);
     });
     await check('disabled feature remains navigable and late responses do not overwrite route exit', async () => {
+      await page.evaluate(() => { window.__borderMapElement = document.querySelector('#cb-flow-map'); });
       mode = 'disabled'; await page.click('#cb-refresh'); await ready();
       assert(await page.locator('#cb-results').isHidden());
       assert.match(await page.locator('#cb-status').innerText(), /disabled/);
@@ -520,6 +682,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.strictEqual(await page.locator('#cb-results').count(), 0);
       assert.strictEqual(await page.locator('.tools-landing').count(), 1);
       assert.strictEqual(await page.evaluate(() => Object.keys(Chart.instances).length), 0, 'route exit destroys all owned charts');
+      assert(await page.evaluate(() => !window.__borderMapElement._leaflet_id), 'route exit removes the owned Leaflet map');
       const exitedCalls = calls.length;
       await page.evaluate(() => window.__borderMinuteCallbacks.at(-1)());
       assert.strictEqual(calls.length, exitedCalls, 'late live timer cannot fetch after exit');
@@ -546,8 +709,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
       assert(await page.locator('[data-bottom-nav-tab="more"]').evaluate(node => node.classList.contains('active')),
         'Border links belongs under Tools, so the mobile More tab must remain active');
-      await page.focus('#cb-peer'); await page.keyboard.press('Tab');
-      assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'cb-local');
+      await page.locator('#cb-local-chips button').first().focus(); await page.keyboard.press('Tab');
+      assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'cb-local-add');
       await page.locator('#cb-window-pills button[data-window="180"]').focus(); await page.keyboard.press('Enter'); await ready();
       assert.match(page.url(), /windowMinutes=180/);
       if (process.env.CROSS_BORDER_ARTIFACT_DIR) {
@@ -560,11 +723,12 @@ const clone = value => JSON.parse(JSON.stringify(value));
         await page.locator('#cb-carry-title').scrollIntoViewIfNeeded();
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-mobile-repeaters.png') });
         await page.setViewportSize({ width: 1440, height: 1050 });
-        await tab('Overview');
+        await tab('Crossings');
         await page.reload(); await ready();
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-desktop.png'), fullPage: true });
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-desktop-top.png') });
         await page.evaluate(() => { document.documentElement.setAttribute('data-theme', 'dark'); window.dispatchEvent(new Event('theme-changed')); });
+        await drawnPaths();
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-dark.png'), fullPage: true });
         await tab('Hash widths');
         assert.strictEqual(await page.locator('#cb-analytics-tabs .active').count(), 1);

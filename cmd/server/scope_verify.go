@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"sort"
 	"strings"
 )
@@ -125,11 +126,22 @@ func scopeHMACInputs(rawHex string) (payloadType byte, payload []byte, code1 str
 // Case is significant and must stay so: the key is a hash over the raw bytes of
 // "#name", so "#BEHSS" and "#behss" are different regions on the wire.
 func regionCode(name string, payloadType byte, payload []byte) string {
+	code := regionCodeUsingMAC(newRegionMAC(name), payloadType, payload)
+	return strings.ToUpper(hex.EncodeToString([]byte{byte(code & 0xFF), byte(code >> 8)}))
+}
+
+func newRegionMAC(name string) hash.Hash {
 	if !strings.HasPrefix(name, "#") {
 		name = "#" + name
 	}
 	sum := sha256.Sum256([]byte(name))
-	mac := hmac.New(sha256.New, sum[:16])
+	return hmac.New(sha256.New, sum[:16])
+}
+
+// regionCodeUsingMAC consumes a fresh or reset keyed MAC owned by the caller.
+// The bulk matcher resets/reuses one per candidate name within its invocation;
+// the single-code wrapper above keeps its established wire-string API.
+func regionCodeUsingMAC(mac hash.Hash, payloadType byte, payload []byte) uint16 {
 	mac.Write([]byte{payloadType})
 	mac.Write(payload)
 	h := mac.Sum(nil)
@@ -139,7 +151,7 @@ func regionCode(name string, payloadType byte, payload []byte) string {
 	} else if code == 0xFFFF {
 		code = 0xFFFE
 	}
-	return strings.ToUpper(hex.EncodeToString([]byte{byte(code & 0xFF), byte(code >> 8)}))
+	return code
 }
 
 // unmatchedTransmissionRow is one transmission that carried a transport scope
