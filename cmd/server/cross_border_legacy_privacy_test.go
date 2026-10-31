@@ -7,6 +7,17 @@ import (
 	"time"
 )
 
+// SQLite binds named $N parameters by first appearance, while PostgreSQL
+// interprets N as an argument position. Verify both intended nodes exist so a
+// missing control cannot make a privacy or collision regression pass vacuously.
+func crossBorderRequireFixtureNodes(t *testing.T, db *DB, a, b string) {
+	t.Helper()
+	var count int
+	if err := db.conn.QueryRow(`SELECT COUNT(*) FROM nodes WHERE public_key IN ($1,$2)`, a, b).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("expected both fixture identities: count=%d error=%v", count, err)
+	}
+}
+
 func TestCrossBorderLegacyHiddenObserverAliasIsPrivateAcrossSources(t *testing.T) {
 	srv, local, peer := crossBorderReviewService(t, crossBorderTestConfig())
 	srv.cfg.SetHiddenNamePrefixes([]string{"Hidden"})
@@ -15,7 +26,8 @@ func TestCrossBorderLegacyHiddenObserverAliasIsPrivateAcrossSources(t *testing.T
 	now := time.Now().Unix() - 10
 	crossBorderExec(t, local, `INSERT INTO observers(rowid,id,name,iata) VALUES(1,'local','Visible receiver','AAA'),(2,$1,'Hidden observer only','ZZZ')`, a)
 	crossBorderExec(t, peer, `INSERT INTO observers(rowid,id,name,iata) VALUES(1,'peer','Visible receiver','BBB')`)
-	crossBorderExec(t, peer, `INSERT INTO nodes(public_key,name,role,lat,lon,last_seen,configured_scope) VALUES($1,'Peer alias of hidden observer','repeater',43.65,-79.38,$3,'sensitive-scope'),($2,'Visible US repeater','repeater',42.88,-78.88,$3,NULL)`, a, b, crossBorderTime(now))
+	crossBorderExec(t, peer, `INSERT INTO nodes(public_key,name,role,lat,lon,last_seen,configured_scope) VALUES($1,'Peer alias of hidden observer','repeater',43.65,-79.38,$2,'sensitive-scope'),($3,'Visible US repeater','repeater',42.88,-78.88,$2,NULL)`, a, crossBorderTime(now), b)
+	crossBorderRequireFixtureNodes(t, peer, a, b)
 	// The legacy report exposes only the last observed relay. Put the
 	// protected alias last; a separate packet keeps the visible control.
 	raw := "1582bb2202aa1101ff"

@@ -20,7 +20,8 @@ func TestCrossBorderFlowUnselectedObserverOnlyIdentityBlocksFalseUniqueHop(t *te
 	// row anywhere. Its known full key must still challenge a shared prefix.
 	crossBorderExec(t, local, `INSERT INTO observers(rowid,id,name,iata) VALUES(1,'local','Selected receiver','AAA'),(2,$1,'Unselected public observer','ZZZ')`, collision)
 	crossBorderExec(t, peer, `INSERT INTO observers(rowid,id,name,iata) VALUES(1,'peer','Selected receiver','BBB')`)
-	crossBorderExec(t, peer, `INSERT INTO nodes(public_key,name,role,lat,lon,last_seen) VALUES($1,'Canadian repeater','repeater',43.65,-79.38,$3),($2,'US repeater','repeater',42.88,-78.88,$3)`, a, b, crossBorderTime(now))
+	crossBorderExec(t, peer, `INSERT INTO nodes(public_key,name,role,lat,lon,last_seen) VALUES($1,'Canadian repeater','repeater',43.65,-79.38,$2),($3,'US repeater','repeater',42.88,-78.88,$2)`, a, crossBorderTime(now), b)
+	crossBorderRequireFixtureNodes(t, peer, a, b)
 	raw := "1582aa1101bb2202ff"
 	crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,first_seen) VALUES(1,'observer-only-collision',$1,1,5,$2)`, raw, crossBorderTime(now))
 	crossBorderExec(t, peer, `INSERT INTO observations(transmission_id,observer_idx,timestamp,direction,raw_hex) VALUES(1,1,$1,'rx',$2)`, now, raw)

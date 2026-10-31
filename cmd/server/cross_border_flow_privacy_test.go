@@ -19,7 +19,8 @@ func TestCrossBorderFlowHiddenObserverOnlyIdentityCannotReappearFromPeerNode(t *
 	// local node row. The complete hidden-observer query is its only guard.
 	crossBorderExec(t, local, `INSERT INTO observers(rowid,id,name,iata) VALUES(1,'local','Visible receiver','AAA'),(2,$1,'Hidden observer only','ZZZ')`, a)
 	crossBorderExec(t, peer, `INSERT INTO observers(rowid,id,name,iata) VALUES(1,'peer','Visible receiver','BBB')`)
-	crossBorderExec(t, peer, `INSERT INTO nodes(public_key,name,role,lat,lon,last_seen,configured_scope) VALUES($1,'Public alias of hidden observer','repeater',43.65,-79.38,$3,'sensitive-scope'),($2,'Visible US repeater','repeater',42.88,-78.88,$3,NULL)`, a, b, crossBorderTime(now))
+	crossBorderExec(t, peer, `INSERT INTO nodes(public_key,name,role,lat,lon,last_seen,configured_scope) VALUES($1,'Public alias of hidden observer','repeater',43.65,-79.38,$2,'sensitive-scope'),($3,'Visible US repeater','repeater',42.88,-78.88,$2,NULL)`, a, crossBorderTime(now), b)
+	crossBorderRequireFixtureNodes(t, peer, a, b)
 	raw := "1582aa1101bb2202ff"
 	crossBorderExec(t, peer, `INSERT INTO transmissions(id,hash,raw_hex,route_type,payload_type,first_seen) VALUES(1,'private-alias-path',$1,1,5,$2)`, raw, crossBorderTime(now))
 	crossBorderExec(t, peer, `INSERT INTO observations(transmission_id,observer_idx,timestamp,direction,raw_hex) VALUES(1,1,$1,'rx',$2)`, now, raw)
