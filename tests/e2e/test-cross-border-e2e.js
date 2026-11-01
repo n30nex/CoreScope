@@ -93,6 +93,11 @@ const clone = value => JSON.parse(JSON.stringify(value));
         data.packets[0].localObservations[0].scope = { kind: 'unknown', name: null };
         if (data.filters.scope !== 'all') data.packets = data.packets.filter(packet => packet.scope.kind === data.filters.scope || packet.scope.name === data.filters.scope);
         data.summary.peerPackets = data.packets.length;
+        if (mode === 'many-paths') {
+          data.dashboard.flow.paths = Array.from({ length: 100 }, (_, index) => ({ ...clone(SAMPLE.dashboard.flow.paths[0]), id: 'height-' + index }));
+          data.dashboard.flow.paths[0].scope.name = 'Long named scope that wraps on a narrow screen';
+          data.dashboard.flow.pathsTruncated = true;
+        }
         if (mode === 'empty' || mode === 'disabled' || mode === 'unavailable') {
           data.packets = []; data.peerObservers = []; data.peerRepeaters = [];
           data.summary = { peerPackets: 0, localReferencePackets: 0, independentSharedPackets: 0, sharedObserverOnlyPackets: 0, sharedFeedIdentityPackets: 0 };
@@ -790,6 +795,41 @@ const clone = value => JSON.parse(JSON.stringify(value));
         }), 'dark tabs retain a distinct active underline');
         await page.screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'border-links-dark-hashes.png'), fullPage: true });
       }
+    });
+    await check('long path lists keep both button lines readable without row overlap', async () => {
+      mode = 'many-paths';
+      await page.goto(BASE + '/#/cross-border?live=0'); await page.reload(); await ready();
+      for (const width of [1440, 375]) {
+        await page.setViewportSize({ width, height: 1050 });
+        await page.evaluate(() => document.fonts.ready);
+        const cards = await page.locator('#cb-flow-path-list').evaluate(list => ({
+          scrolls: list.scrollHeight > list.clientHeight,
+          cards: Array.from(list.children).map(button => {
+            const bounds = button.getBoundingClientRect();
+            const detail = button.querySelector('span').getBoundingClientRect();
+            const next = button.nextElementSibling?.getBoundingClientRect();
+            return { height: bounds.height, client: button.clientHeight, scroll: button.scrollHeight,
+              contentFits: detail.bottom <= bounds.bottom - parseFloat(getComputedStyle(button).paddingBottom) + 1,
+              overlaps: next ? bounds.bottom > next.top : false };
+          }),
+        }));
+        assert.strictEqual(cards.cards.length, 100);
+        assert(cards.scrolls, 'The long list must scroll instead of compressing its cards');
+        assert(cards.cards.every(card => card.scroll <= card.client + 1 && card.contentFits && !card.overlaps),
+          width + 'px path buttons must contain both lines without overlap: ' + JSON.stringify(cards.cards.slice(0, 2)));
+        const requests = calls.length;
+        await page.locator('#cb-flow-path-list button').last().click();
+        assert.match(page.url(), /path=height-99/);
+        assert.strictEqual(await page.locator('#cb-flow-path-list button').last().getAttribute('aria-pressed'), 'true');
+        assert.strictEqual(calls.length, requests, 'Selecting a path must reuse its snapshot');
+        if (process.env.CROSS_BORDER_ARTIFACT_DIR) {
+          fs.mkdirSync(process.env.CROSS_BORDER_ARTIFACT_DIR, { recursive: true });
+          await page.locator('#cb-flow-path-list').evaluate(list => { list.scrollTop = 0; });
+          await page.locator('#cb-flow-path-list').screenshot({ path: path.join(process.env.CROSS_BORDER_ARTIFACT_DIR, 'path-cards-' + width + '.png') });
+        }
+      }
+      mode = 'normal'; await page.setViewportSize({ width: 1440, height: 1050 });
+      await page.goto(BASE + '/#/cross-border?live=0'); await page.reload(); await ready();
     });
     assert.deepStrictEqual(errors, [], 'Browser must have no uncaught JavaScript errors');
     console.log('Border links ' + (SERVED ? 'served' : 'fixture') + ' browser acceptance complete; ' + coverageFiles + ' page-only coverage files. No server processes started.');
