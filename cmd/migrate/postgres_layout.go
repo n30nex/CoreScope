@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"encoding/json"
@@ -8,6 +9,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/meshcore-analyzer/dbschema"
 )
 
 // Captured from the versioned native ApplyPostgres entrypoints. The regression
@@ -117,6 +120,20 @@ func validatePostgresLayout(db *sql.DB, kind string, tables []importTable) error
 	got, err := postgresLayout(db, kind, tables)
 	if err != nil {
 		return err
+	}
+	if kind == "telemetry" {
+		present, err := dbschema.HasPostgresObserverTransmissionIndex(context.Background(), db)
+		if err != nil {
+			return err
+		}
+		if !present {
+			// This one optional physical index has no logical-format effect.
+			// Accept the exact pre-upgrade layout too; all other extensions
+			// retain the existing fail-closed comparison below.
+			expected[kind] = slices.DeleteFunc(expected[kind], func(entry string) bool {
+				return strings.Contains(entry, "CREATE INDEX idx_observations_observer_tx ON {schema}.observations USING btree (observer_idx, transmission_id)")
+			})
+		}
 	}
 	if !slices.Equal(got, expected[kind]) {
 		return errors.New("unsupported PostgreSQL columns, constraints, indexes, policies or views; conversion refused without changing the source")

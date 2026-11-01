@@ -232,6 +232,25 @@ func openStore(storage dbconfig.Storage, cfg *DBConfig, sampleIntervalSec int, c
 	}
 
 	if s.Backend() == dbconfig.SQLite {
+		coverPresent, err := dbschema.HasSQLiteObserverTransmissionIndex(context.Background(), db)
+		if err != nil {
+			return nil, err
+		}
+		if !coverPresent {
+			if _, err := db.Exec(`UPDATE _async_migrations SET status='pending_async' WHERE name='obs_observer_tx_idx_v1' AND status='done'`); err != nil {
+				return nil, err
+			}
+		}
+		// PREFLIGHT: async=true reason="observer/transmission covering index; keep the large build off startup"
+		if err := s.RunAsyncMigration(context.Background(), "obs_observer_tx_idx_v1", func(ctx context.Context, d *sql.DB) error {
+			if err := dbschema.EnsureSQLiteObserverTransmissionIndex(ctx, d); err != nil {
+				return err
+			}
+			_, err := d.ExecContext(ctx, `INSERT INTO _migrations(name) VALUES('obs_observer_tx_idx_v1') ON CONFLICT DO NOTHING`)
+			return err
+		}); err != nil {
+			return nil, err
+		}
 		var present int
 		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_observations_observer_idx_timestamp'`).Scan(&present); err != nil {
 			return nil, err

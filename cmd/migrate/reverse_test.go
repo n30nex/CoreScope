@@ -65,6 +65,9 @@ func TestReverseTelemetryPreservesRowsAndFutureIDs(t *testing.T) {
 	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_observations_observer_idx_timestamp'`).Scan(&indexCount); err != nil || indexCount != 1 {
 		t.Fatal("copied done ledger lacks its native index", err)
 	}
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_observations_observer_tx'`).Scan(&indexCount); err != nil || indexCount != 1 {
+		t.Fatal("reverse conversion omitted the observer transmission index", indexCount, err)
+	}
 	var status, started, ended string
 	if err := db.QueryRow(`SELECT status,started_at,ended_at FROM _async_migrations WHERE name='obs_observer_ts_idx_v1'`).Scan(&status, &started, &ended); err != nil || status != "done" || started != "raw started" || ended != "raw ended" {
 		t.Fatal("source migration ledger changed", err)

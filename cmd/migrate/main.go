@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/meshcore-analyzer/dbschema"
 	"github.com/meshcore-analyzer/pgutil"
@@ -38,6 +39,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer) error {
 	offline := flags.Bool("offline", false, "confirm telemetry and account writers are stopped")
 	resume := flags.Bool("resume", false, "resume the same source/state/destination import")
 	checkReady := flags.Bool("check-ready", false, "check readiness without changing any schema or data")
+	ensureObserverIndex := flags.Bool("ensure-observer-transmission-index", false, "offline telemetry-owner upgrade of the observer/transmission covering index")
 	checkImportKind := flags.String("check-import-kind", "", "read-only completed-import guard: telemetry or accounts, with its SQLite source path")
 	action := flags.String("storage-action", "", "installation status, setup, adopt, init, switch, resume or abort")
 	selectionFile := flags.String("selection-file", "", "absolute stable storage-selection.json path")
@@ -57,6 +59,37 @@ func runCommand(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if flags.NArg() != 0 {
 		return errors.New("unexpected positional migration argument; use -help")
+	}
+	if *ensureObserverIndex {
+		incompatible := false
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "ensure-observer-transmission-index", "offline", "database-url":
+			default:
+				incompatible = true
+			}
+		})
+		if !*offline || incompatible || os.Getenv("CORESCOPE_USERS_DATABASE_URL") != "" {
+			return errors.New("observer index upgrade requires -offline and telemetry-only owner settings; do not combine with other actions")
+		}
+		if *databaseURL == "" {
+			*databaseURL = os.Getenv("CORESCOPE_DATABASE_URL")
+		}
+		if *databaseURL == "" {
+			return errors.New("observer index upgrade requires the telemetry owner URL")
+		}
+		db, err := pgutil.Open(*databaseURL, false)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		upgradeCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		defer cancel()
+		result, err := dbschema.EnsurePostgresObserverTransmissionIndex(upgradeCtx, db)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(result)
 	}
 	if *action != "" {
 		if *source != "" || *accountSource != "" || *resume || *checkReady || *checkImportKind != "" {

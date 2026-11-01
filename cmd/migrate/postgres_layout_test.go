@@ -28,6 +28,23 @@ func TestPostgresConversionLayoutMatchesNativeSchema(t *testing.T) {
 			if err := validatePostgresLayout(db, kind, tables); err != nil {
 				t.Fatal(err)
 			}
+			if kind == "telemetry" {
+				if _, err := db.Exec(`DROP INDEX idx_observations_observer_tx`); err != nil {
+					t.Fatal(err)
+				}
+				if err := validatePostgresLayout(db, kind, tables); err != nil {
+					t.Fatal("pre-index v1 layout rejected", err)
+				}
+				if _, err := db.Exec(`CREATE INDEX idx_observations_observer_tx ON observations(transmission_id,observer_idx)`); err != nil {
+					t.Fatal(err)
+				}
+				if err := validatePostgresLayout(db, kind, tables); err == nil {
+					t.Fatal("wrong optional index definition accepted")
+				}
+				if _, err := db.Exec(`DROP INDEX idx_observations_observer_tx`); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if _, err := db.Exec(`CREATE INDEX unexpected_extension ON ` + quote(tables[0].Name) + ` (` + quote(tables[0].Columns[0].Name) + `)`); err != nil {
 				t.Fatal(err)
 			}

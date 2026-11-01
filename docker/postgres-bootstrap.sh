@@ -5,6 +5,9 @@ set -eu
 # requires the explicit verified switch; a missing record is never a fallback.
 /app/storage.sh postgres-setup
 /app/storage.sh managed-postgres
+# The app writers must be stopped before this owner-only, transactional upgrade.
+# Existing ready installations need this explicit step too; never touch accounts.
+CORESCOPE_USERS_DATABASE_URL= /app/corescope-migrate -ensure-observer-transmission-index -offline
 # Legacy check-ready remains a read-only schema check; use owner-only environment
 # for this child without changing the runtime account role URL or leaking argv.
 databases=corescope_telemetry

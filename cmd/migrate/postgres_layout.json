@@ -529,6 +529,7 @@
     "[\"index\", \"nodes\", \"CREATE UNIQUE INDEX nodes_pkey ON {schema}.nodes USING btree (public_key)\"]",
     "[\"index\", \"observations\", \"CREATE INDEX idx_observations_observer_idx ON {schema}.observations USING btree (observer_idx)\"]",
     "[\"index\", \"observations\", \"CREATE INDEX idx_observations_observer_idx_timestamp ON {schema}.observations USING btree (observer_idx, \\\"timestamp\\\")\"]",
+    "[\"index\", \"observations\", \"CREATE INDEX idx_observations_observer_tx ON {schema}.observations USING btree (observer_idx, transmission_id)\"]",
     "[\"index\", \"observations\", \"CREATE INDEX idx_observations_timestamp ON {schema}.observations USING btree (\\\"timestamp\\\")\"]",
     "[\"index\", \"observations\", \"CREATE INDEX idx_observations_transmission_id ON {schema}.observations USING btree (transmission_id)\"]",
     "[\"index\", \"observations\", \"CREATE INDEX idx_observations_tx_ts ON {schema}.observations USING btree (transmission_id, \\\"timestamp\\\")\"]",

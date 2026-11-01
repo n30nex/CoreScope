@@ -251,6 +251,8 @@ CREATE TABLE advert_evidence_backfill (
 
 CREATE INDEX IF NOT EXISTS idx_observations_observer_idx_timestamp ON observations(observer_idx,timestamp);
 
+CREATE INDEX IF NOT EXISTS idx_observations_observer_tx ON observations(observer_idx,transmission_id);
+
 CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
 
 CREATE INDEX IF NOT EXISTS idx_observers_last_seen ON observers(last_seen);
