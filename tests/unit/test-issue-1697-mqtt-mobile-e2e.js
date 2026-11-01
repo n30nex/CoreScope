@@ -30,21 +30,32 @@ function loadPanel(innerWidth) {
   // test can inspect the rendered DOM without jsdom.
   const container = {
     _html: '',
+    writes: 0,
     get innerHTML() { return this._html; },
-    set innerHTML(v) { this._html = String(v); }
+    set innerHTML(v) { this._html = String(v); this.writes++; }
   };
-  const win = { innerWidth: innerWidth, addEventListener: function () {}, removeEventListener: function () {} };
+  let resizeHandler, resizeTimer;
+  const win = {
+    innerWidth: innerWidth,
+    addEventListener: function (type, handler) { if (type === 'resize') resizeHandler = handler; },
+    removeEventListener: function () {}
+  };
   const ctx = {
     window: win,
     document: { createElement: function () { return {}; } },
     module: { exports: {} },
-    setInterval, clearInterval, setTimeout, clearTimeout,
+    setInterval, clearInterval,
+    setTimeout: function (handler) { resizeTimer = handler; return 1; },
+    clearTimeout: function () { resizeTimer = null; },
     Promise
   };
   vm.createContext(ctx);
   const src = fs.readFileSync(path.resolve(REPO_ROOT, 'public/mqtt-status-panel.js'), 'utf8');
   vm.runInContext(src, ctx);
-  return { Panel: ctx.window.MqttStatusPanel, container: container, win: win };
+  return {
+    Panel: ctx.window.MqttStatusPanel, container: container, win: win,
+    resize: function (width) { win.innerWidth = width; resizeHandler(); resizeTimer(); }
+  };
 }
 
 const NOW = 1_700_000_000_000;
@@ -127,6 +138,20 @@ test('renderPanel reads window.innerWidth (regression: layout must be viewport-a
   d.Panel.renderPanel(d.container, PAYLOAD, NOW);
   assert.notStrictEqual(m.container.innerHTML, d.container.innerHTML,
     'renderPanel output at 375px and 1200px must differ');
+});
+
+test('a refresh before the resize debounce cannot leave the desktop table on mobile', () => {
+  const { Panel, container, win, resize } = loadPanel(375);
+  Panel.renderPanel(container, PAYLOAD, NOW);
+  win.innerWidth = 1200;
+  Panel.renderPanel(container, PAYLOAD, NOW);
+  assert.ok(container.innerHTML.includes('mqtt-status-table'), 'refresh renders the desktop layout');
+  resize(375);
+  assert.ok(container.innerHTML.includes('mqtt-status-card'), 'return to mobile restores cards');
+  assert.ok(!container.innerHTML.includes('mqtt-status-table'), 'stale desktop table is removed');
+  const writes = container.writes;
+  resize(360);
+  assert.strictEqual(container.writes, writes, 'same-layout resize avoids rebuilding the panel');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
