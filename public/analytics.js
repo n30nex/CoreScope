@@ -267,6 +267,9 @@
 
     // Re-render when distance unit or theme changes
     _themeRefreshHandler = function () {
+      // Clock colors already follow CSS variables; rebuilding would reset the
+      // selected severity and sort when the initial theme arrives late.
+      if (_currentTab === 'clock-health') return;
       // #1925: never full-rebuild the neighbor-graph tab on theme-refresh.
       // Every page load fires one theme-refresh ~300ms after
       // /api/config/theme resolves (app.js dispatches 'theme-changed', then
@@ -4988,7 +4991,7 @@ function destroy() { _analyticsLoadId++; _analyticsLoadError = ''; _stopRolesRef
         });
 
         // Summary
-        var counts = { ok: 0, warning: 0, critical: 0, absurd: 0 };
+        var counts = { ok: 0, warning: 0, critical: 0, absurd: 0, no_clock: 0 };
         data.forEach(function(n) { if (counts[n.severity] !== undefined) counts[n.severity]++; });
 
         // Filter buttons (also serve as summary — no separate stats pills needed)
