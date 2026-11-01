@@ -10,7 +10,7 @@ const quote=value=>"'"+value.replace(/'/g,"'\\''")+"'";
 const posix=value=>value.replace(/\\/g,'/');
 const names=['refresh_build_metadata','is_true','dc_prod_base','dc_staging_base','dc_postgres','storage_at','storage_action','storage_field','selected_backend','require_managed_postgres','choose_storage','dc_prod','dc_staging','cmd_start','cmd_update','cmd_stop','cmd_storage'];
 const functions=names.map(name=>source.match(new RegExp(`^${name}\\(\\)\\s*\\{[\\s\\S]*?^}`,'m'))?.[0]||'').join('\n');
-function run(command,backend='sqlite',state='ready',input=''){
+function run(command,backend='sqlite',state='ready',input='',failure=''){
  const log=path.join(temp,'calls');fs.writeFileSync(log,'');
  const script=`
 set -e
@@ -21,6 +21,7 @@ STAGING_COMPOSE_FILE=docker-compose.staging.yml
 STAGING_CONTAINER=corescope-staging-go
 RECORD_BACKEND=${quote(backend)}
 RECORD_STATE=${quote(state)}
+FAIL_STEP=${quote(failure)}
 CORESCOPE_DB_BACKEND=sqlite
 CALLS=${quote(posix(log))}
 log(){ :; }; info(){ :; }; warn(){ :; }; err(){ printf '%s\\n' "$*" >&2; }
@@ -42,6 +43,9 @@ fake_compose(){
   *'/app/storage.sh prod field source_backend'|*'/app/storage.sh prod field target_backend') printf '%s\\n' "$RECORD_BACKEND";;
   *'/app/storage.sh prod field job_id'|*'/app/storage.sh staging-go field job_id') printf '0123456789abcdef0123456789abcdef\\n';;
   *) printf 'compose %s\\n' "$*" >> "$CALLS";;
+ esac
+ case "$FAIL_STEP:$*" in
+  build:*'build prod'|stop:*'stop prod'|bootstrap:*'run --rm --no-deps bootstrap'|start:*'up -d --no-deps --force-recreate prod') return 17;;
  esac
 }
 ${functions}
@@ -66,6 +70,22 @@ try{
  assert(update.calls.includes('build prod'),'update did not build its source');
  assert(update.calls.includes('docker-compose.postgres.yml'),'update discarded recorded backend');
  assert(!/storage.sh (switch|init)/.test(update.calls),'ordinary update changed backend');
+ const buildAt=update.calls.indexOf('build prod'),stopAt=update.calls.indexOf('stop prod'),bootstrapAt=update.calls.indexOf('run --rm --no-deps bootstrap'),startAt=update.calls.indexOf('up -d --no-deps --force-recreate prod');
+ assert(buildAt>=0&&stopAt>buildAt&&bootstrapAt>stopAt&&startAt>bootstrapAt,'PostgreSQL update must build, stop writers, run a fresh bootstrap, then start only the app');
+ assert(!/up .*postgres/.test(update.calls),'index upgrade restarted PostgreSQL');
+ for(const step of ['build','stop','bootstrap']){
+  const failedUpdate=run('if cmd_update latest; then exit 0; else exit 17; fi','postgres','ready','',step);
+  assert.notEqual(failedUpdate.status,0,step+' failure was ignored');
+  assert(!failedUpdate.calls.includes('up -d --no-deps --force-recreate prod'),step+' failure started an unverified candidate');
+  if(step==='build')assert(!failedUpdate.calls.includes('stop prod'),'failed build stopped the running app');
+  if(step==='stop')assert(!failedUpdate.calls.includes('run --rm --no-deps bootstrap'),'failed writer stop reached DDL');
+ }
+ const failedStart=run('if cmd_update latest; then exit 0; else exit 17; fi','postgres','ready','','start');
+ assert.notEqual(failedStart.status,0,'failed app startup was reported as success');
+ const sqliteUpdate=run('cmd_update latest','sqlite');
+ assert.equal(sqliteUpdate.status,0,sqliteUpdate.stderr);
+ assert(sqliteUpdate.calls.includes('up -d --force-recreate prod'),'SQLite update behavior changed');
+ assert(!sqliteUpdate.calls.includes('bootstrap')&&!sqliteUpdate.calls.includes('.postgres.yml'),'SQLite update invoked PostgreSQL owner tooling');
  const defaultChoice=run('choose_storage','sqlite','unrecorded','\n');
  assert.equal(defaultChoice.status,0,defaultChoice.stderr);
  assert(!defaultChoice.calls.includes('credentials prepared'),'default setup prepared PostgreSQL credentials');

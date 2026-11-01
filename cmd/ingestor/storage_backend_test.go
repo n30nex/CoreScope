@@ -44,6 +44,33 @@ func TestSQLiteObserverTimeIndexCompletesThroughAsyncLedger(t *testing.T) {
 	}
 }
 
+func TestSQLiteObserverTransmissionIndexUpgradeAndRecovery(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "observer-transmission-index.db")
+	for round := 0; round < 2; round++ {
+		s, err := OpenStore(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.WaitForAsyncMigrations()
+		var count int
+		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_observations_observer_tx'`).Scan(&count); err != nil || count != 1 {
+			s.Close()
+			t.Fatalf("covering index missing on round %d: %d %v", round, count, err)
+		}
+		if status, err := s.AsyncMigrationStatus("obs_observer_tx_idx_v1"); err != nil || status != "done" {
+			s.Close()
+			t.Fatal(status, err)
+		}
+		if round == 0 {
+			if _, err := s.db.Exec(`DROP INDEX idx_observations_observer_tx`); err != nil {
+				s.Close()
+				t.Fatal(err)
+			}
+		}
+		s.Close()
+	}
+}
+
 func TestSQLiteMissingObserverIndexIsNotHiddenByCompletionMarker(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "recovered-index.db")
 	s, err := OpenStore(path)

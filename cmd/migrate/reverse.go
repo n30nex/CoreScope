@@ -452,6 +452,9 @@ func reversePostgres(ctx context.Context, o reverseOptions) (importReport, error
 		if err := dbschema.EnsureSQLiteObserverTimeIndex(ctx, destination); err != nil {
 			return report, err
 		}
+		if err := dbschema.EnsureSQLiteObserverTransmissionIndex(ctx, destination); err != nil {
+			return report, err
+		}
 	}
 	if err := assertSQLiteIntegrity(ctx, destination); err != nil {
 		return report, err

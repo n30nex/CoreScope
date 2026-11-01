@@ -1607,10 +1607,24 @@ cmd_update() {
   migrate_config auto
 
   info "Rebuilding image..."
-  dc_prod_base build prod
+  dc_prod_base build prod || return 1
 
   info "Restarting with new image..."
-  dc_prod up -d --force-recreate prod
+  local backend
+  backend=$(selected_backend prod) || return 1
+  if [ "$backend" = postgres ]; then
+    require_database_credentials || return 1
+    dc_prod_base stop prod || return 1
+    # A completed Compose dependency does not rerun an owner upgrade. Run a
+    # fresh bootstrap with writers stopped, leaving PostgreSQL itself running.
+    if ! dc_postgres prod run --rm --no-deps bootstrap; then
+      err "PostgreSQL bootstrap failed. The application remains stopped; verify database readiness and the rollback boundary before restarting."
+      return 1
+    fi
+    dc_postgres prod up -d --no-deps --force-recreate prod || return 1
+  else
+    dc_prod up -d --force-recreate prod || return 1
+  fi
 
   log "Updated and restarted. Data preserved."
   # Show current version

@@ -24,8 +24,13 @@ const calls=process.env.CALLS;
 if(name!=='jq')fs.appendFileSync(calls,JSON.stringify([name,...args])+'\\n');
 const field=flag=>args.find(v=>v.startsWith(flag+'='))?.slice(flag.length+1)||args[args.indexOf(flag)+1];
 if(name==='corescope-migrate'){
+ if(args.includes('-ensure-observer-transmission-index')){
+  fs.appendFileSync(calls,JSON.stringify(['index-upgrade',Boolean(process.env.CORESCOPE_DATABASE_URL),Boolean(process.env.CORESCOPE_USERS_DATABASE_URL)])+'\\n');
+  if(!args.includes('-offline'))process.exit(2);
+  process.exit(process.env.SCENARIO==='fail-index'?17:0);
+ }
  if(args.includes('-check-ready')){
-  fs.appendFileSync(calls,JSON.stringify(['readiness-accounts',Boolean(process.env.CORESCOPE_USERS_DATABASE_URL)])+'\\n');process.exit(0);
+  fs.appendFileSync(calls,JSON.stringify(['readiness-accounts',Boolean(process.env.CORESCOPE_USERS_DATABASE_URL)])+'\\n');process.exit(process.env.SCENARIO==='fail-readiness'?18:0);
  }
  const selection=field('-selection-file');const action=field('-storage-action');
  if(action==='status'){
@@ -37,7 +42,8 @@ if(name==='corescope-migrate'){
  }else if(action==='setup'){
   if(process.env.SCENARIO==='fail-setup')process.exit(1);
   const backend=field('-backend')||'sqlite';fs.mkdirSync(path.dirname(selection),{recursive:true});
-  fs.writeFileSync(selection,JSON.stringify({version:1,state:'ready',backend,generation:'one',job_id:''}));console.log(JSON.stringify({verified:true}));
+  const pg=backend==='postgres'?{telemetry:{postgres:{host:'postgres',port:5432,database:'corescope_telemetry',schema:'public'}},accounts:null}:{};
+  fs.writeFileSync(selection,JSON.stringify({version:1,state:'ready',backend,generation:'one',job_id:'',...pg}));console.log(JSON.stringify({verified:true}));
  }else{process.stderr.write('unexpected migration action');process.exit(2)}
 }else if(name==='jq'){
  const value=JSON.parse(fs.readFileSync(0,'utf8'));const query=args.at(-1);
@@ -111,21 +117,41 @@ try {
   const selectionFile=path.join(app,'data/custom/storage-selection.json');
   const target=database=>({postgres:{host:'postgres',port:5432,database,schema:'public'}});
   const pgReport={version:1,state:'ready',backend:'postgres',generation:'one',telemetry:target('corescope_telemetry'),accounts:null};
+  const ownerEnv={CORESCOPE_OWNER_PASSWORD:'synthetic-owner',CORESCOPE_DATABASE_URL:'synthetic-telemetry-owner'};
+  const freshPG=run({...ownerEnv,CORESCOPE_STATE_DIR:posix(path.join(app,'data/fresh-postgres')),CORESCOPE_DB_BACKEND:'postgres'},[],true);
+  assert.equal(freshPG.status,0,freshPG.stderr||freshPG.error?.message);
+  const setupAt=freshPG.calls.findIndex(call=>call.includes('-storage-action=setup'));
+  const upgradeAt=freshPG.calls.findIndex(call=>call.includes('-ensure-observer-transmission-index'));
+  const readyAt=freshPG.calls.findIndex(call=>call.includes('-check-ready'));
+  assert(setupAt>=0&&upgradeAt>setupAt&&readyAt>upgradeAt,'fresh bootstrap must setup, ensure index, then check readiness');
   for(const accounts of [null,target('corescope_accounts')]){
     fs.writeFileSync(selectionFile,JSON.stringify({...pgReport,accounts}));
     const guard=run({},['managed-postgres']);
     assert.equal(guard.status,0,'canonical PostgreSQL with optional accounts was rejected: '+guard.stderr);
-    const started=run({CORESCOPE_OWNER_PASSWORD:'synthetic-owner',CORESCOPE_USERS_OWNER_DATABASE_URL:accounts?'synthetic-owner-url':'',CORESCOPE_USERS_DATABASE_URL:'runtime-account-url'},[],true);
+    const started=run({...ownerEnv,CORESCOPE_USERS_OWNER_DATABASE_URL:accounts?'synthetic-owner-url':'',CORESCOPE_USERS_DATABASE_URL:'runtime-account-url'},[],true);
     assert.equal(started.status,0,started.stderr||started.error?.message);
     assert.deepEqual(started.calls.filter(call=>call[0]==='grant-database').map(call=>call[1]),accounts?['corescope_telemetry','corescope_accounts']:['corescope_telemetry']);
     assert.deepEqual(started.calls.find(call=>call[0]==='readiness-accounts'),['readiness-accounts',accounts!==null]);
     assert(!started.calls.some(call=>call.includes('-storage-action=setup')),'ready PostgreSQL was implicitly initialized');
+    assert.deepEqual(started.calls.find(call=>call[0]==='index-upgrade'),['index-upgrade',true,false],'index upgrade must use telemetry owner and clear account credentials');
+    assert(started.calls.findIndex(call=>call.includes('-ensure-observer-transmission-index'))<started.calls.findIndex(call=>call.includes('-check-ready')),'index upgrade must precede readiness');
+    const normal=run();
+    assert.equal(normal.status,0,normal.stderr);
+    assert(!normal.calls.some(call=>call.includes('-ensure-observer-transmission-index')),'ordinary application start must not run owner upgrades');
+  }
+  fs.writeFileSync(selectionFile,JSON.stringify(pgReport));
+  for(const scenario of ['fail-index','fail-readiness']){
+    const failure=run({...ownerEnv,SCENARIO:scenario},[],true);
+    assert.notEqual(failure.status,0,'failed bootstrap continued');
+    assert(!failure.calls.some(call=>call[0]==='psql'),'failed upgrade/readiness applied grants');
+    if(scenario==='fail-index')assert(!failure.calls.some(call=>call.includes('-check-ready')),'failed index upgrade reached readiness');
+    assert.deepEqual(JSON.parse(fs.readFileSync(selectionFile,'utf8')),pgReport,'failed upgrade changed the storage selection');
   }
   for(const report of [{...pgReport,telemetry:target('unselected_telemetry')},{...pgReport,accounts:target('unselected_accounts')},{...pgReport,accounts:{sqlite_path:'/app/data/users.db'}}]){
     fs.writeFileSync(selectionFile,JSON.stringify(report));
     const rejected=run({CORESCOPE_OWNER_PASSWORD:'synthetic-owner'},[],true);
     assert.notEqual(rejected.status,0,'custom/non-PostgreSQL target passed the managed guard');
-    assert(!rejected.calls.some(call=>call[0]==='psql'||call.includes('-check-ready')),'rejected target reached database operations');
+    assert(!rejected.calls.some(call=>call[0]==='psql'||call.includes('-check-ready')||call.includes('-ensure-observer-transmission-index')),'rejected target reached database operations');
   }
   console.log('PASS packaged SQLite setup, recorded choice on recreate, blocked journals/errors and persistent custom state');
 } finally {
