@@ -165,27 +165,24 @@
 
   // Track active panel containers so the global resize listener can
   // re-render them when the viewport flips across the breakpoint.
-  // The Map is keyed by container; value is the most recent payload.
+  // Each entry remembers its payload and the layout actually rendered. A
+  // status refresh can render before the debounced resize callback runs.
   var _active = (typeof Map === 'function') ? new Map() : null;
   var _resizeBound = false;
   var _resizeTimer = null;
-  var _lastBucket = null; // 'mobile' | 'desktop'
 
   function currentBucket() { return getViewportWidth() <= MOBILE_MAX_PX ? 'mobile' : 'desktop'; }
 
   function bindResizeOnce() {
     if (_resizeBound || typeof window === 'undefined' || !window.addEventListener) return;
     _resizeBound = true;
-    _lastBucket = currentBucket();
     window.addEventListener('resize', function () {
       if (_resizeTimer) clearTimeout(_resizeTimer);
       _resizeTimer = setTimeout(function () {
         var b = currentBucket();
-        if (b === _lastBucket) return; // only re-render on bucket flip
-        _lastBucket = b;
         if (!_active) return;
-        _active.forEach(function (payload, container) {
-          renderPanel(container, payload, Date.now());
+        _active.forEach(function (entry, container) {
+          if (entry.bucket !== b) renderPanel(container, entry.payload, Date.now());
         });
       }, RESIZE_DEBOUNCE_MS);
     });
@@ -196,7 +193,7 @@
     var sources = (payload && payload.sources) || [];
 
     // Remember the latest payload for resize-driven re-render.
-    if (_active && payload) _active.set(container, payload);
+    if (_active && payload) _active.set(container, { payload: payload, bucket: currentBucket() });
     bindResizeOnce();
 
     if (sources.length === 0) {

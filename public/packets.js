@@ -4157,10 +4157,10 @@
       rows += `<tr class="anomaly-row" style="background:var(--warning, #f0ad4e); color:#000; font-weight:600;"><td colspan="2"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-warning"/></svg> Anomaly</td><td colspan="2">${escapeHtml(decoded.anomaly)}</td></tr>`;
     }
 
-    return `<table class="field-table">
+    return `<div class="table-scroll-wrap"><table class="field-table">
       <thead><tr><th scope="col">Offset</th><th scope="col">Field</th><th scope="col">Value</th><th scope="col">Description</th></tr></thead>
       <tbody>${rows}</tbody>
-    </table>`;
+    </table></div>`;
   }
 
   function sectionRow(label, cls) {
