@@ -40,6 +40,11 @@ type paramMeta struct {
 // Key format: "METHOD /path/pattern"
 func routeDescriptions() map[string]routeMeta {
 	return map[string]routeMeta{
+		"GET /api/packets/summary": {
+			Summary: "Bounded observer packet summaries", Tag: "packets",
+			Description: "Returns packets containing hash, payload_type, route_type and timestamp (transmission first_seen), plus limit and truncated. Observer membership and recent observation evidence are independent. Ordered by descending transmission ID. Reads one extra row to disclose truncation; does not compute an exact total or load observation/payload details. Requests cancel after 15 seconds. The configured packet limit can lower the 10000-row ceiling.",
+			QueryParams: []paramMeta{{Name: "observer", Description: "One observer identifier", Required: true, Type: "string"}, {Name: "since", Description: "Inclusive RFC3339 observation-time cutoff", Required: true, Type: "string"}, {Name: "limit", Description: "1 to 10000; defaults to 10000, capped by the configured packet limit", Type: "integer"}},
+		},
 		// Config
 		"GET /api/config/cache":      {Summary: "Get cache configuration", Tag: "config"},
 		"GET /api/config/client":     {Summary: "Get client configuration", Tag: "config"},

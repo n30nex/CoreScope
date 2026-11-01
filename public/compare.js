@@ -79,6 +79,10 @@ if (typeof window !== 'undefined') {
 (function () {
   var PAYLOAD_LABELS = { 0: 'Request', 1: 'Response', 2: 'Direct Msg', 3: 'ACK', 4: 'Advert', 5: 'Channel Msg', 7: 'Anon Req', 8: 'Path', 9: 'Trace', 11: 'Control' };
   var MAX_PACKETS = 10000;
+  // Fixed request safety deadline; the comparison window remains 24 hours.
+  var REQUEST_TIMEOUT_MS = 30000;
+  var requestGeneration = 0;
+  var pendingRequest = null;
   var observers = [];
   var selA = null;
   var selB = null;
@@ -88,7 +92,47 @@ if (typeof window !== 'undefined') {
   var currentView = 'summary';
   var routeFilter = 'all';
 
+  function cancelRequest() {
+    requestGeneration++;
+    if (!pendingRequest) return;
+    clearTimeout(pendingRequest.timer);
+    pendingRequest.controller.abort();
+    pendingRequest = null;
+  }
+
+  function startRequest() {
+    cancelRequest();
+    var request = { controller: new AbortController(), generation: requestGeneration, timedOut: false };
+    request.timer = setTimeout(function () {
+      request.timedOut = true;
+      request.controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+    pendingRequest = request;
+    return request;
+  }
+
+  function finishRequest(request) {
+    clearTimeout(request.timer);
+    if (pendingRequest === request) pendingRequest = null;
+  }
+
+  async function requestJSON(path, request) {
+    // Same prefix/session behavior as api(); page ownership permits cancellation
+    // without aborting shared cached requests or retrying expensive 503s.
+    var response = await fetch('/api' + path, { signal: request.controller.signal, credentials: 'same-origin' });
+    if (!response.ok) throw new Error('Request failed');
+    return response.json();
+  }
+
+  function showRequestError(container, request, subject, retry) {
+    var message = request.timedOut ? 'Loading ' + subject + ' timed out after 30 seconds.' : 'Could not load ' + subject + '.';
+    container.innerHTML = '<div role="alert" class="text-muted" style="padding:24px"><p>' + message +
+      ' No comparison is available. You can retry or choose different observers.</p><button type="button" class="btn btn-secondary">Retry</button></div>';
+    container.querySelector('button').addEventListener('click', retry);
+  }
+
   function init(app, routeParam) {
+    cancelRequest();
     // Parse preselected observers from URL: #/compare?a=ID1&b=ID2
     var hashParams = location.hash.split('?')[1] || '';
     var params = new URLSearchParams(hashParams);
@@ -123,6 +167,7 @@ if (typeof window !== 'undefined') {
   }
 
   function destroy() {
+    cancelRequest();
     observers = [];
     selA = null;
     selB = null;
@@ -140,16 +185,25 @@ if (typeof window !== 'undefined') {
   }
 
   async function loadObservers() {
+    var controls = document.getElementById('compareControls');
+    if (!controls) return;
+    var request = startRequest();
+    controls.innerHTML = '<div class="text-center text-muted" style="padding:20px">Loading observers\u2026</div>';
     try {
-      var data = await api('/observers', { ttl: CLIENT_TTL.observers });
-      observers = (data.observers || []).sort(function (a, b) {
+      var data = await requestJSON('/observers', request);
+      if (request.generation !== requestGeneration) return;
+      if (request.timedOut) throw new Error('Timed out');
+      if (!data || !Array.isArray(data.observers)) throw new Error('Invalid observer data');
+      observers = data.observers.sort(function (a, b) {
         return (a.name || a.id).localeCompare(b.name || b.id);
       });
       renderControls();
       if (isComparisonReady()) runComparison();
     } catch (e) {
-      document.getElementById('compareControls').innerHTML =
-        '<div class="text-muted" style="padding:20px">Error loading observers: ' + escapeHtml(e.message) + '</div>';
+      if (request.generation !== requestGeneration) return;
+      showRequestError(controls, request, 'observers', loadObservers);
+    } finally {
+      finishRequest(request);
     }
   }
 
@@ -197,7 +251,7 @@ if (typeof window !== 'undefined') {
     ddRoute.value = routeFilter;
     ddRoute.addEventListener('change', function () {
       routeFilter = ddRoute.value;
-      if (comparisonResult) runComparison();
+      if (isComparisonReady()) runComparison();
     });
 
     // #1646 — single source of truth for "should we run a comparison?".
@@ -216,7 +270,7 @@ if (typeof window !== 'undefined') {
       updateBtn();
       // change events only fire when value actually changes, so any
       // ready transition that lands here came from a real user action.
-      if (isComparisonReady()) runComparison();
+      runComparison();
     }
     ddA.addEventListener('change', onChange);
     ddB.addEventListener('change', onChange);
@@ -256,9 +310,17 @@ if (typeof window !== 'undefined') {
   }
 
   async function runComparison() {
-    if (!selA || !selB || selA === selB) return;
     var content = document.getElementById('compareContent');
     if (!content) return;
+    var request = startRequest();
+    comparisonResult = null;
+    packetsA = [];
+    packetsB = [];
+    if (!isComparisonReady()) {
+      finishRequest(request);
+      content.innerHTML = '<p class="text-muted">Choose two different observers to compare.</p>';
+      return;
+    }
 
     content.innerHTML = '<div class="text-center text-muted" style="padding:40px">Fetching packets\u2026</div>';
 
@@ -271,9 +333,15 @@ if (typeof window !== 'undefined') {
     try {
       var since24h = sinceISO(24);
       var results = await Promise.all([
-        api('/packets?observer=' + encodeURIComponent(selA) + '&limit=' + MAX_PACKETS + '&since=' + encodeURIComponent(since24h)),
-        api('/packets?observer=' + encodeURIComponent(selB) + '&limit=' + MAX_PACKETS + '&since=' + encodeURIComponent(since24h))
+        requestJSON('/packets/summary?observer=' + encodeURIComponent(selA) + '&limit=' + MAX_PACKETS + '&since=' + encodeURIComponent(since24h), request),
+        requestJSON('/packets/summary?observer=' + encodeURIComponent(selB) + '&limit=' + MAX_PACKETS + '&since=' + encodeURIComponent(since24h), request)
       ]);
+      if (request.generation !== requestGeneration) return;
+      if (request.timedOut) throw new Error('Timed out');
+      if (!results.every(function (result) {
+        return result && Array.isArray(result.packets) && typeof result.truncated === 'boolean' &&
+          Number.isInteger(result.limit) && result.limit > 0 && result.limit <= MAX_PACKETS && result.packets.length <= result.limit;
+      })) throw new Error('Invalid packet summary');
 
       packetsA = results[0].packets || [];
       packetsB = results[1].packets || [];
@@ -286,6 +354,10 @@ if (typeof window !== 'undefined') {
       var hashesB = new Set(filteredB.map(function (p) { return p.hash; }));
 
       comparisonResult = comparePacketSets(hashesA, hashesB);
+      comparisonResult.truncatedA = results[0].truncated;
+      comparisonResult.truncatedB = results[1].truncated;
+      comparisonResult.limitA = results[0].limit;
+      comparisonResult.limitB = results[1].limit;
 
       // Build hash→packet lookups for detail rendering
       comparisonResult.packetMapA = new Map();
@@ -296,7 +368,11 @@ if (typeof window !== 'undefined') {
       currentView = 'summary';
       renderComparison();
     } catch (e) {
-      content.innerHTML = '<div class="text-muted" style="padding:40px">Error: ' + escapeHtml(e.message) + '</div>';
+      if (request.generation !== requestGeneration) return;
+      request.controller.abort();
+      showRequestError(content, request, 'the comparison', runComparison);
+    } finally {
+      finishRequest(request);
     }
   }
 
@@ -314,6 +390,10 @@ if (typeof window !== 'undefined') {
     var r = comparisonResult;
     var nameA = escapeHtml(obsName(selA));
     var nameB = escapeHtml(obsName(selB));
+    var limited = r.truncatedA || r.truncatedB;
+    var limitedSides = [];
+    if (r.truncatedA) limitedSides.push(nameA + ': limited to ' + r.limitA.toLocaleString() + (r.limitA === 1 ? ' packet' : ' packets'));
+    if (r.truncatedB) limitedSides.push(nameB + ': limited to ' + r.limitB.toLocaleString() + (r.limitB === 1 ? ' packet' : ' packets'));
     var total = r.onlyA.length + r.onlyB.length + r.both.length;
     var pctBoth = total > 0 ? Math.round(r.both.length / total * 100) : 0;
     var pctA = total > 0 ? Math.round(r.onlyA.length / total * 100) : 0;
@@ -339,6 +419,8 @@ if (typeof window !== 'undefined') {
 
     content.innerHTML =
       '<div class="compare-results">' +
+        (limited ? '<p class="compare-warning" role="note"><strong>Limited 24-hour sample.</strong> ' + limitedSides.join('. ') +
+          '. Counts and overlap describe the returned samples. Full-period totals are unknown.</p>' : '') +
         // Headline strip — A | shared | B above a single proportional bar.
         // All three cells lead with their percentage so the row reads in
         // one unit (Tufte: show data variation, not design variation).
@@ -353,7 +435,7 @@ if (typeof window !== 'undefined') {
             '<div class="compare-strip-mid" data-view="both" role="button" tabindex="0" aria-label="Show shared packets">' +
               '<div class="compare-strip-mid-pct">' + pctBoth + '<span class="compare-strip-mid-pct-unit">%</span></div>' +
               '<div class="compare-strip-mid-count">' + r.both.length.toLocaleString() + '</div>' +
-              '<div class="compare-strip-mid-label">of all unique</div>' +
+              '<div class="compare-strip-mid-label">' + (limited ? 'of sampled unique' : 'of all unique') + '</div>' +
             '</div>' +
             '<div class="compare-strip-side compare-strip-side-b" data-view="onlyB" role="button" tabindex="0" aria-label="Show only ' + nameB + ' packets">' +
               '<div class="compare-strip-name">' + nameB + '</div>' +
@@ -378,16 +460,16 @@ if (typeof window !== 'undefined') {
         '</section>' +
 
         // Asymmetric reach — two compact sentences instead of two big cards
-        '<section class="compare-asym" aria-label="Directional reach">' +
+        '<section class="compare-asym" aria-label="' + (limited ? 'Sample overlap' : 'Directional reach') + '">' +
           '<div class="compare-asym-line">' +
             '<span class="compare-asym-pct">' + stats.aSeesOfB.toFixed(1) + '%</span>' +
-            nameA + ' saw <b>' + stats.shared.toLocaleString() + '</b> of ' + nameB +
-            '\u2019s <b>' + stats.totalB.toLocaleString() + '</b> packets' +
+            nameA + (limited ? '\u2019s sample includes <b>' : ' saw <b>') + stats.shared.toLocaleString() + '</b> of ' + nameB +
+            '\u2019s <b>' + stats.totalB.toLocaleString() + '</b>' + (limited ? ' sampled packets' : ' packets') +
           '</div>' +
           '<div class="compare-asym-line">' +
             '<span class="compare-asym-pct">' + stats.bSeesOfA.toFixed(1) + '%</span>' +
-            nameB + ' saw <b>' + stats.shared.toLocaleString() + '</b> of ' + nameA +
-            '\u2019s <b>' + stats.totalA.toLocaleString() + '</b> packets' +
+            nameB + (limited ? '\u2019s sample includes <b>' : ' saw <b>') + stats.shared.toLocaleString() + '</b> of ' + nameA +
+            '\u2019s <b>' + stats.totalA.toLocaleString() + '</b>' + (limited ? ' sampled packets' : ' packets') +
           '</div>' +
         '</section>' +
 
@@ -476,6 +558,7 @@ if (typeof window !== 'undefined') {
     var r = comparisonResult;
     var nameA = escapeHtml(obsName(selA));
     var nameB = escapeHtml(obsName(selB));
+    var limited = r.truncatedA || r.truncatedB;
 
     if (currentView === 'summary') {
       // Textual summary — the headline strip + asym lines already cover
@@ -485,13 +568,13 @@ if (typeof window !== 'undefined') {
       var overlap = total > 0 ? (r.both.length / total * 100).toFixed(1) : '0.0';
       el.innerHTML =
         '<div class="compare-summary-text">' +
-          '<p>In the last 24 hours, <strong>' + nameA + '</strong> saw <strong>' +
+          '<p>' + (limited ? 'In the returned 24-hour samples, <strong>' : 'In the last 24 hours, <strong>') + nameA + '</strong> ' + (limited ? 'has <strong>' : 'saw <strong>') +
             (r.onlyA.length + r.both.length).toLocaleString() + '</strong> unique packets ' +
-          'and <strong>' + nameB + '</strong> saw <strong>' +
+          'and <strong>' + nameB + '</strong> ' + (limited ? 'has <strong>' : 'saw <strong>') +
             (r.onlyB.length + r.both.length).toLocaleString() + '</strong> unique packets. ' +
           '<strong>' + r.both.length.toLocaleString() + '</strong> (' + overlap + '%) were seen by both observers.</p>' +
-          (r.both.length === 0 && total > 0 ? '<p class="compare-warning">\u26A0\uFE0F These observers share no packets \u2014 they may be on different frequencies or too far apart.</p>' : '') +
-          (r.onlyA.length === 0 && r.onlyB.length === 0 && r.both.length > 0 ? '<p class="compare-good">\u2705 Perfect overlap \u2014 both observers see the same packets.</p>' : '') +
+          (r.both.length === 0 && total > 0 ? '<p class="compare-warning">' + (limited ? 'The returned samples share no packets. Full-period overlap is unknown.' : '\u26A0\uFE0F These observers share no packets \u2014 they may be on different frequencies or too far apart.') + '</p>' : '') +
+          (r.onlyA.length === 0 && r.onlyB.length === 0 && r.both.length > 0 ? '<p class="compare-good">' + (limited ? 'The returned samples overlap completely. Full-period overlap is unknown.' : '\u2705 Perfect overlap \u2014 both observers see the same packets.') + '</p>' : '') +
         '</div>';
       return;
     }
