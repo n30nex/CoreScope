@@ -37,8 +37,28 @@ func TestCanadaverseThemeDefaultsAndOverrides(t *testing.T) {
 	if got.Branding["siteName"] != "Canadaverse CoreScope" || got.Home.HeroTitle != "Canadaverse CoreScope" {
 		t.Fatalf("unexpected default identity: branding=%v homeTitle=%v", got.Branding, got.Home.HeroTitle)
 	}
-	if got.Theme["background"] != "#f3f8f5" || got.ThemeDark["background"] != "#020706" || got.ThemeDark["accent"] != "#18b7ff" {
-		t.Fatalf("unexpected light/dark palette: light=%v dark=%v", got.Theme["background"], got.ThemeDark)
+	for _, palette := range []struct {
+		name string
+		got  map[string]string
+		want map[string]string
+	}{
+		{"light", got.Theme, map[string]string{
+			"background": "#f4f4f5", "surface1": "#ffffff", "surface2": "#f4f4f5",
+			"accent": "#2563eb", "text": "#18181b", "textMuted": "#52525b", "border": "#d4d4d8",
+		}},
+		{"dark", got.ThemeDark, map[string]string{
+			"background": "#09090b", "surface1": "#101012", "surface2": "#141418",
+			"accent": "#3b82f6", "text": "#fafafa", "textMuted": "#a1a1aa", "border": "#27272a",
+		}},
+	} {
+		for key, want := range palette.want {
+			if palette.got[key] != want {
+				t.Errorf("%s %s = %q, want %q", palette.name, key, palette.got[key], want)
+			}
+		}
+	}
+	if !strings.HasPrefix(got.Theme["font"], "Inter, system-ui") || got.ThemeDark["font"] != "" {
+		t.Fatal("use a shared local font default so dark mode still inherits operator font overrides")
 	}
 	if len(got.Home.Steps) < 2 || !strings.Contains(got.Home.Steps[1].Description, "local mesh community") || strings.Contains(got.Home.Steps[1].Description, "910.525") {
 		t.Fatal("onboarding must defer to the operator's local radio preset")
@@ -58,5 +78,8 @@ func TestCanadaverseThemeDefaultsAndOverrides(t *testing.T) {
 	got = read()
 	if got.Branding["siteName"] != "Theme mesh" || got.Theme["accent"] != "#223344" || got.ThemeDark["background"] != "#123456" {
 		t.Fatal("theme.json must keep its existing precedence")
+	}
+	if got.ThemeDark["surface1"] != "#101012" || got.Theme["text"] != "#18181b" {
+		t.Fatal("partial overrides must retain the new default palette for untouched fields")
 	}
 }

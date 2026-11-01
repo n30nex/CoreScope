@@ -31,13 +31,27 @@ function contrast(a, b) {
     await page.waitForFunction(() => window._customizerV2?.initDone);
     await page.locator('.home-hero').waitFor();
     for (const theme of ['light', 'dark']) {
-      await page.evaluate(t => document.documentElement.setAttribute('data-theme', t), theme);
+      const expected = theme === 'dark'
+        ? { background: '#09090b', accent: '#3b82f6' }
+        : { background: '#f4f4f5', accent: '#2563eb' };
+      if (await page.locator('#darkModeCheckbox').isChecked() !== (theme === 'dark')) {
+        await page.locator('#darkModeToggle').click();
+      }
+      await page.waitForFunction(({ theme, background, accent }) => {
+        const root = document.documentElement;
+        const cs = getComputedStyle(root);
+        return root.dataset.theme === theme &&
+          cs.getPropertyValue('--surface-0').trim() === background &&
+          cs.getPropertyValue('--accent').trim() === accent;
+      }, { theme, ...expected });
       await check(theme + ': body, links and muted labels meet AA on all main surfaces', async () => {
         const colors = await page.evaluate(() => {
           const cs = getComputedStyle(document.documentElement);
           const names = ['text', 'text-muted', 'link-color', 'surface-0', 'surface-1', 'surface-2', 'nav-text', 'nav-bg', 'text-on-accent', 'accent-strong'];
           return Object.fromEntries(names.map(n => [n, cs.getPropertyValue('--' + n).trim()]));
         });
+        assert.equal(colors['surface-0'], expected.background, 'the active palette must follow the theme toggle');
+        assert.equal(colors['link-color'], expected.accent);
         for (const fg of ['text', 'text-muted', 'link-color']) {
           for (const bg of ['surface-0', 'surface-1', 'surface-2']) {
             assert(contrast(colors[fg], colors[bg]) >= 4.5, theme + ' ' + fg + '/' + bg + ' contrast below 4.5');
@@ -94,6 +108,45 @@ function contrast(a, b) {
       assert(await page.locator('.brand-mark-only').isVisible());
       assert(!(await page.locator('.brand-logo').isVisible()));
     });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(BASE + '/#/packets');
+    await page.waitForFunction(() => window._customizerV2?.initDone);
+    await page.locator('#packetFilterInput').waitFor();
+    await check('body uses sans-serif while protocol expressions retain monospace', async () => {
+      const fonts = await page.evaluate(() => ({
+        body: getComputedStyle(document.body).fontFamily,
+        protocol: getComputedStyle(document.querySelector('#packetFilterInput')).fontFamily
+      }));
+      assert.match(fonts.body, /system-ui|sans-serif/);
+      assert.doesNotMatch(fonts.body, /monospace/i);
+      assert.match(fonts.protocol, /monospace/i);
+      assert.notEqual(fonts.body, fonts.protocol);
+    });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await check(width + 'px: compact filter sizing leaves checkboxes and clickable labels intact', async () => {
+        if (await page.locator('#filterToggleBtn').isVisible()) await page.locator('#filterToggleBtn').click();
+        await page.locator('#typeTrigger').click();
+        const checkbox = page.locator('#typeMenu input[type="checkbox"]').nth(1);
+        await checkbox.waitFor();
+        const sizes = await checkbox.evaluate(el => {
+          const sheet = Array.from(document.styleSheets).find(item => item.href && item.href.includes('/canadaverse.css'));
+          const measure = () => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; };
+          const themed = measure();
+          try {
+            sheet.disabled = true;
+            return { themed, baseline: measure() };
+          } finally { sheet.disabled = false; }
+        });
+        assert.deepEqual(sizes.themed, sizes.baseline, 'theme must not resize checkbox controls');
+        const checked = await checkbox.isChecked();
+        await checkbox.locator('..').click();
+        assert.equal(await checkbox.isChecked(), !checked, 'the existing label still toggles its checkbox');
+        await page.locator('#typeTrigger').click();
+        const textInput = await page.locator('#fHash').boundingBox();
+        assert.equal(textInput.height, width > 768 ? 32 : 44, 'text filters keep the intended desktop/mobile size');
+      });
+    }
     await page.goto(BASE + '/#/live');
     await page.locator('#vcrLcdCanvas').waitFor();
     for (const width of [320, 360, 375, 390]) {
