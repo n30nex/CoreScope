@@ -47,6 +47,7 @@ window.ObserverDetailNaiveBanner = {
   let charts = [];
   let currentDays = 7;
   let currentId = null;
+  let detailLoadGeneration = 0;
 
   function destroyCharts() {
     charts.forEach(c => { try { c.destroy(); } catch {} });
@@ -135,11 +136,13 @@ window.ObserverDetailNaiveBanner = {
   }
 
   function destroy() {
+    detailLoadGeneration++;
     destroyCharts();
     currentId = null;
   }
 
   async function loadDetail() {
+    const generation = ++detailLoadGeneration;
     try {
       destroyCharts();
       chartDefaults();
@@ -148,6 +151,7 @@ window.ObserverDetailNaiveBanner = {
         api('/observers/' + encodeURIComponent(currentId) + '/analytics?days=' + currentDays),
         api('/observers/clock-skew', { ttl: 30000 }).catch(function() { return []; }),
       ]);
+      if (generation !== detailLoadGeneration) return;
       // Find this observer's calibration data.
       var obsSkew = null;
       (Array.isArray(obsSkewArr) ? obsSkewArr : []).forEach(function(s) {
@@ -155,6 +159,7 @@ window.ObserverDetailNaiveBanner = {
       });
       renderDetail(obs, analytics, obsSkew);
     } catch (e) {
+      if (generation !== detailLoadGeneration) return;
       // SECURITY (OBS-2, PR #1539): use textContent for error messages.
       // Error.message is JS-controlled and shouldn't normally carry attacker
       // strings, but textContent is a one-line defense against an upstream
@@ -287,7 +292,7 @@ window.ObserverDetailNaiveBanner = {
           <strong>How this is computed:</strong> when this observer and another observer see the same packet, we compare their receive timestamps. The median deviation across all multi-observer packets is this observer's offset.
         </div>
       </div>` : ''}
-      <div class="obs-charts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:16px">
+      <div class="obs-charts" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(400px,100%),1fr));gap:16px">
         <div class="chart-card" style="padding:12px">
           <h3 style="margin:0 0 8px;font-size:0.95em">Packets Over Time</h3>
           <canvas id="obsTimeChart" role="img" aria-label="Packets over time chart"></canvas>

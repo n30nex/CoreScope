@@ -4470,27 +4470,35 @@
     };
   }
 
+  // A response from a route we left must not replace the current page.
+  let packetDetailSeq = 0;
   registerPage('packet-detail', {
     init: async (app, routeParam) => {
+      const seq = ++packetDetailSeq;
       const param = routeParam;
       app.innerHTML = `<div style="max-width:800px;margin:0 auto;padding:20px"><div class="text-center text-muted" style="padding:40px">Loading packet…</div></div>`;
       try {
         await loadObservers();
-        const data = await api(`/packets/${param}`);
-        if (!data?.packet) { app.innerHTML = `<div style="max-width:800px;margin:0 auto;padding:40px;text-align:center"><h2>Packet not found</h2><p>Packet ${param} doesn't exist.</p><a href="#/packets">← Back to packets</a></div>`; return; }
+        if (seq !== packetDetailSeq) return;
+        const data = await api(`/packets/${encodeURIComponent(param)}`);
+        if (seq !== packetDetailSeq) return;
+        if (!data?.packet) { app.innerHTML = `<div style="max-width:800px;margin:0 auto;padding:40px;text-align:center"><h2>Packet not found</h2><p>Packet ${escapeHtml(param)} doesn't exist.</p><a href="#/packets">← Back to packets</a></div>`; return; }
         await resolveHopsForPackets([data.packet]);
+        if (seq !== packetDetailSeq) return;
         const container = document.createElement('div');
         container.style.cssText = 'max-width:800px;margin:0 auto;padding:20px';
         container.innerHTML = `<div style="margin-bottom:16px"><a href="#/packets" style="color:var(--link-color);text-decoration:none">← Back to packets</a></div>`;
         const detail = document.createElement('div');
         container.appendChild(detail);
         await renderDetail(detail, data);
+        if (seq !== packetDetailSeq) return;
         app.innerHTML = '';
         app.appendChild(container);
       } catch (e) {
-        app.innerHTML = `<div style="max-width:800px;margin:0 auto;padding:40px;text-align:center"><h2>Error</h2><p>${e.message}</p><a href="#/packets">← Back to packets</a></div>`;
+        if (seq !== packetDetailSeq) return;
+        app.innerHTML = `<div style="max-width:800px;margin:0 auto;padding:40px;text-align:center"><h2>Error</h2><p>${escapeHtml(e.message)}</p><a href="#/packets">← Back to packets</a></div>`;
       }
     },
-    destroy: () => {}
+    destroy: () => { packetDetailSeq++; }
   });
 })();
