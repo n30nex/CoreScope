@@ -37,12 +37,13 @@ type ListLimitsConfig struct {
 
 // Config mirrors the Node.js config.json structure (read-only fields).
 type Config struct {
-	Port        int               `json:"port"`
-	APIKey      string            `json:"apiKey"`
-	DBPath      string            `json:"dbPath,omitempty"` // legacy SQLite path; an installed selection is authoritative
-	DatabaseURL string            `json:"databaseURL"`
-	StateDir    string            `json:"stateDir"`
-	ListLimits  *ListLimitsConfig `json:"listLimits"`
+	Port        int                `json:"port"`
+	APIKey      string             `json:"apiKey"`
+	DBPath      string             `json:"dbPath,omitempty"` // legacy SQLite path; an installed selection is authoritative
+	DatabaseURL string             `json:"databaseURL"`
+	StateDir    string             `json:"stateDir"`
+	ListLimits  *ListLimitsConfig  `json:"listLimits"`
+	CrossBorder *CrossBorderConfig `json:"crossBorder,omitempty"`
 
 	// NodeBlacklist is a list of public keys to exclude from all API responses.
 	// Blacklisted nodes are hidden from node lists, search, detail, map, and stats.

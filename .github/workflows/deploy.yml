@@ -749,6 +749,7 @@ jobs:
             env "$@" node "tests/e2e/$file" 2>&1 | tee -a e2e-output.txt
           }
           suite 2 test-e2e-playwright.js BASE_URL=$B
+          suite 2 test-cross-border-e2e.js BASE_URL=$B
           # M5+M6 of #1668 — axe-core CI gate.
           # M5: color-contrast on desktop dark+light.
           # M6: expanded ruleset (image-alt, label, aria-required-attr,

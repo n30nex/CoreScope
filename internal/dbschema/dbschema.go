@@ -103,10 +103,14 @@ func applyTx(tx *sql.Tx, initialReady bool) error {
 	return nil
 }
 
-func AssertReady(db *sql.DB) error {
+func AssertReady(db *sql.DB) error { return AssertReadyContext(context.Background(), db) }
+
+// AssertReadyContext validates the PostgreSQL version, import-ready marker,
+// columns, and indexes without outliving the caller's query deadline.
+func AssertReadyContext(ctx context.Context, db *sql.DB) error {
 	var version int
 	var ready bool
-	if err := db.QueryRow(`SELECT version,ready FROM corescope_schema WHERE kind='telemetry'`).Scan(&version, &ready); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT version,ready FROM corescope_schema WHERE kind='telemetry'`).Scan(&version, &ready); err != nil {
 		return fmt.Errorf("telemetry schema is not initialized; run the offline migration command: %w", err)
 	}
 	if version != Version {
@@ -115,7 +119,7 @@ func AssertReady(db *sql.DB) error {
 	if !ready {
 		return fmt.Errorf("telemetry import is incomplete; finish or restore the offline import")
 	}
-	rows, err := db.Query(`SELECT table_name,column_name,data_type,is_identity FROM information_schema.columns WHERE table_schema=current_schema()`)
+	rows, err := db.QueryContext(ctx, `SELECT table_name,column_name,data_type,is_identity FROM information_schema.columns WHERE table_schema=current_schema()`)
 	if err != nil {
 		return err
 	}
@@ -149,7 +153,7 @@ func AssertReady(db *sql.DB) error {
 	if !have["packets_v.id"] {
 		missing = append(missing, "packets_v")
 	}
-	indexRows, err := db.Query(`SELECT indexname FROM pg_indexes WHERE schemaname=current_schema()`)
+	indexRows, err := db.QueryContext(ctx, `SELECT indexname FROM pg_indexes WHERE schemaname=current_schema()`)
 	if err != nil {
 		return err
 	}
