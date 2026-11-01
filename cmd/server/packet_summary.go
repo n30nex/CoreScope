@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/meshcore-analyzer/dbconfig"
 )
 
 const packetSummaryMax = 10000
@@ -28,15 +31,30 @@ type PacketSummaryResult struct {
 }
 
 func (db *DB) packetSummarySQL(observer string, since time.Time, limit int) (string, []any) {
-	// Reuse observer-ever membership. Time evidence can come from a different
-	// observer: combining both predicates on one observation would change it.
-	where, args := db.buildTransmissionWhere(PacketQuery{Observer: observer})
-	where = append(where, fmt.Sprintf(`EXISTS (SELECT 1 FROM observations ot
-		WHERE ot.transmission_id = t.id AND ot.timestamp >= %s LIMIT 1 OFFSET 0)`, db.parameter(len(args)+1)))
-	args = append(args, since.Unix())
-	query := fmt.Sprintf(`SELECT t.hash, t.payload_type, t.route_type, t.first_seen
-		FROM transmissions t WHERE %s ORDER BY t.id DESC LIMIT %s`, strings.Join(where, " AND "), db.parameter(len(args)+1))
-	return query, append(args, limit+1)
+	observerMatch := "oi.observer_id = " + db.parameter(1)
+	if db.isV3 {
+		observerMatch = "oi.observer_idx = (SELECT rowid FROM observers WHERE id = " + db.parameter(1) + ")"
+	}
+	// Keep observer-ever membership and recent evidence independent. Materialize
+	// IDs through time qualification and paging before loading packet fields;
+	// otherwise the planner can fetch every historical packet heap row first.
+	// Validate IDs before the cap so orphan observations cannot consume a slot.
+	query := fmt.Sprintf(`WITH observer_ids AS MATERIALIZED (
+		SELECT DISTINCT oi.transmission_id FROM observations oi WHERE %s
+	), recent_ids AS MATERIALIZED (
+		SELECT p.transmission_id FROM observer_ids p WHERE EXISTS (
+			SELECT 1 FROM observations ot WHERE ot.transmission_id = p.transmission_id
+			AND ot.timestamp >= %s ORDER BY ot.timestamp DESC LIMIT 1 OFFSET 0
+		)
+	), page_ids AS MATERIALIZED (
+		SELECT p.transmission_id FROM recent_ids p WHERE EXISTS (
+			SELECT 1 FROM transmissions valid WHERE valid.id = p.transmission_id LIMIT 1 OFFSET 0
+		) ORDER BY p.transmission_id DESC LIMIT %s
+	)
+	SELECT t.hash, t.payload_type, t.route_type, t.first_seen
+	FROM page_ids p JOIN transmissions t ON t.id = p.transmission_id
+	ORDER BY p.transmission_id DESC`, observerMatch, db.parameter(2), db.parameter(3))
+	return query, []any{strings.TrimSpace(observer), since.Unix(), limit + 1}
 }
 
 func (db *DB) QueryPacketSummary(ctx context.Context, observer string, since time.Time, limit int) (*PacketSummaryResult, error) {
@@ -44,7 +62,24 @@ func (db *DB) QueryPacketSummary(ctx context.Context, observer string, since tim
 		return nil, fmt.Errorf("invalid packet summary limit")
 	}
 	query, args := db.packetSummarySQL(observer, since, limit)
-	rows, err := db.conn.QueryContext(ctx, query, args...)
+	var tx *sql.Tx
+	var rows *sql.Rows
+	var err error
+	if db.Backend() == dbconfig.Postgres {
+		// JIT setup can exceed this bounded lookup's latency budget. Scope the
+		// setting to a read-only transaction; other requests retain their policy.
+		tx, err = db.conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
+		if _, err = tx.ExecContext(ctx, "SET LOCAL jit = off"); err != nil {
+			return nil, err
+		}
+		rows, err = tx.QueryContext(ctx, query, args...)
+	} else {
+		rows, err = db.conn.QueryContext(ctx, query, args...)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +96,14 @@ func (db *DB) QueryPacketSummary(ctx context.Context, observer string, since tim
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
 	}
 	if len(result.Packets) > limit {
 		result.Packets = result.Packets[:limit]

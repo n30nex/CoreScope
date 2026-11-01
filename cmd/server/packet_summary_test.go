@@ -199,3 +199,140 @@ func TestPacketSummaryBoundedPlan(t *testing.T) {
 		t.Fatalf("fixture did not exercise its time-existence index lookup: %s", raw)
 	}
 }
+
+func TestPacketSummaryHeapReadsFollowPage(t *testing.T) {
+	postgresOnly(t)
+	db, q := packetSummaryFixture(t, 8000)
+	since, _ := time.Parse(time.RFC3339, q.Since)
+	query, args := db.packetSummarySQL(q.Observer, since, 7)
+	var raw string
+	if err := db.conn.QueryRow("EXPLAIN (ANALYZE, FORMAT JSON) "+query, args...).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var plans []struct{ Plan map[string]any }
+	if err := json.Unmarshal([]byte(raw), &plans); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	var walk func(map[string]any)
+	walk = func(node map[string]any) {
+		if node["Relation Name"] == "transmissions" && node["Alias"] == "t" {
+			found = true
+			rows := node["Actual Rows"].(float64)
+			if removed, ok := node["Rows Removed by Filter"].(float64); ok {
+				rows += removed
+			}
+			if rows*node["Actual Loops"].(float64) > 8 {
+				t.Errorf("packet heap fields fetched before the cap+1 page: rows=%v loops=%v", rows, node["Actual Loops"])
+			}
+		}
+		children, _ := node["Plans"].([]any)
+		for _, child := range children {
+			walk(child.(map[string]any))
+		}
+	}
+	walk(plans[0].Plan)
+	if !found {
+		t.Fatal("fixture did not exercise the packet field lookup")
+	}
+}
+
+func TestPacketSummaryOrphansCannotConsumePage(t *testing.T) {
+	dsn := postgresTestDSN(t)
+	conn, err := openFixtureSQL(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	db := &DB{conn: conn, backend: testBackendValue(), isV3: true}
+	for _, query := range []string{
+		`CREATE TABLE observers(rowid INTEGER PRIMARY KEY,id TEXT UNIQUE)`,
+		`CREATE TABLE transmissions(id INTEGER PRIMARY KEY,hash TEXT,payload_type INTEGER,route_type INTEGER,first_seen TEXT)`,
+		`CREATE TABLE observations(transmission_id INTEGER,observer_idx INTEGER,timestamp BIGINT)`,
+		`INSERT INTO observers VALUES(1,'observer')`,
+		`INSERT INTO transmissions VALUES(1,'one',5,1,'2020-01-01'),(2,'two',NULL,NULL,'2020-01-02')`,
+		`INSERT INTO observations VALUES(1,1,200),(2,1,200),(99,1,200),(100,1,200),(2,1,201)`,
+	} {
+		if _, err := conn.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, limit := range []int{1, 2} {
+		result, err := db.QueryPacketSummary(context.Background(), "observer", time.Unix(100, 0), limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Packets) != limit || result.Packets[0].Hash != "two" || result.Truncated != (limit == 1) {
+			t.Fatalf("orphan/duplicate observations changed pagination: %+v", result)
+		}
+	}
+}
+
+func TestPacketSummaryJitSettingRestored(t *testing.T) {
+	postgresOnly(t)
+	db := setupTestDB(t)
+	if _, err := db.conn.Exec("SET jit = on"); err != nil {
+		t.Fatal(err)
+	}
+	assertRestored := func() {
+		t.Helper()
+		var setting string
+		if err := db.conn.QueryRow("SHOW jit").Scan(&setting); err != nil || setting != "on" {
+			t.Fatalf("summary changed the pooled connection's JIT policy: %q %v", setting, err)
+		}
+	}
+	if _, err := db.QueryPacketSummary(context.Background(), "missing", time.Now(), 1); err != nil {
+		t.Fatal(err)
+	}
+	assertRestored()
+	// Block the SELECT after its transaction-local setting has been applied.
+	// Cancellation must roll the transaction back and restore the same pool.
+	writer, err := openFixtureSQL(db.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	lock, err := writer.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Rollback()
+	if _, err := lock.Exec("LOCK TABLE observations IN ACCESS EXCLUSIVE MODE"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	_, err = db.QueryPacketSummary(ctx, "missing", time.Now(), 1)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("blocked summary did not honor cancellation: %v", err)
+	}
+	if err := lock.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	assertRestored()
+}
+
+func TestPacketSummaryLegacyObserverIDs(t *testing.T) {
+	conn, err := openFixtureSQL(postgresTestDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	db := &DB{conn: conn, backend: testBackendValue()}
+	// Legacy observations carry the identity directly; they do not require an
+	// observer metadata row. A recent different observer still qualifies a TX.
+	for _, query := range []string{
+		`CREATE TABLE transmissions(id INTEGER PRIMARY KEY,hash TEXT,payload_type INTEGER,route_type INTEGER,first_seen TEXT)`,
+		`CREATE TABLE observations(transmission_id INTEGER,observer_id TEXT,timestamp BIGINT)`,
+		`INSERT INTO transmissions VALUES(1,'legacy',5,1,'2020-01-01'),(2,'old',5,1,'2020-01-02')`,
+		`INSERT INTO observations VALUES(1,'observer',100),(1,'other',200),(2,'observer',100),(99,'observer',200)`,
+	} {
+		if _, err := conn.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := db.QueryPacketSummary(context.Background(), "observer", time.Unix(150, 0), 1)
+	if err != nil || len(result.Packets) != 1 || result.Packets[0].Hash != "legacy" || result.Truncated {
+		t.Fatalf("legacy observer/time/orphan membership changed: %+v %v", result, err)
+	}
+}
