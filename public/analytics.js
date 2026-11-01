@@ -86,7 +86,7 @@
       const y = h - 2 - (v / max) * (h - 4);
       return `${x},${y}`;
     }).join(' ');
-    return `<svg viewBox="0 0 ${w} ${h}" style="width:${w}px;height:${h}px" role="img" aria-label="Sparkline showing trend of ${data.length} data points"><title>Sparkline showing trend of ${data.length} data points</title><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"/></svg>`;
+    return `<svg viewBox="0 0 ${w} ${h}" style="width:${w}px;max-width:100%;height:auto" role="img" aria-label="Sparkline showing trend of ${data.length} data points"><title>Sparkline showing trend of ${data.length} data points</title><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5"/></svg>`;
   }
 
   function barChart(data, labels, colors, w = 800, h = 220, pad = 40) {
@@ -389,7 +389,7 @@
         if (typeof makeColumnsResizable === 'function') makeColumnsResizable('#' + tbl.id, `meshcore-analytics-${tab}-${i}-col-widths`);
       });
       // #206 — Wrap analytics tables in scroll containers on mobile
-      el.querySelectorAll('.analytics-table').forEach(tbl => {
+      el.querySelectorAll('.analytics-table, .data-table').forEach(tbl => {
         if (!tbl.parentElement.classList.contains('analytics-table-scroll')) {
           const wrapper = document.createElement('div');
           wrapper.className = 'analytics-table-scroll';
@@ -5019,14 +5019,14 @@ function destroy() { _analyticsLoadId++; _analyticsLoadError = ''; _stopRolesRef
 
         el.innerHTML = '<h3 style="margin:0 0 10px"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-clock"/></svg> Clock Health</h3>' +
           filterHtml +
-          '<table class="data-table analytics-table" id="clock-health-table">' +
+          '<div class="analytics-table-scroll"><table class="data-table analytics-table" id="clock-health-table">' +
           '<thead><tr>' +
           '<th data-sort-col="name" style="cursor:pointer">Name</th>' +
           '<th data-sort-col="skew" style="cursor:pointer">Skew</th>' +
           '<th data-sort-col="severity" style="cursor:pointer">Severity</th>' +
           '<th data-sort-col="drift" style="cursor:pointer">Drift Rate</th>' +
           '<th>Last Advert</th>' +
-          '</tr></thead><tbody>' + rowsHtml + '</tbody></table>';
+          '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
 
         // Bind filter clicks
         el.querySelectorAll('.clock-filter-btn').forEach(function(btn) {

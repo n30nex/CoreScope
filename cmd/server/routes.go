@@ -740,11 +740,11 @@ func (s *Server) handleConfigTheme(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleConfigMap(w http.ResponseWriter, r *http.Request) {
 	center := s.cfg.MapDefaults.Center
 	if len(center) == 0 {
-		center = []float64{37.45, -122.0}
+		center = []float64{56, -96}
 	}
 	zoom := s.cfg.MapDefaults.Zoom
 	if zoom == 0 {
-		zoom = 9
+		zoom = 3
 	}
 	writeJSON(w, MapConfigResponse{Center: center, Zoom: zoom})
 }

@@ -2550,7 +2550,8 @@ button.ch-item:hover .ch-icon-btn { opacity: 1; }
   .filter-bar.filters-expanded > .col-toggle-wrap { display: inline-block; }
   .filter-bar.filters-expanded input { width: 100%; }
   .filter-bar.filters-expanded select { width: 100%; }
-  .filter-group { flex-wrap: wrap; }
+  /* Match the desktop group rule so narrow filters can actually wrap. */
+  .filter-bar .filter-group { flex-wrap: wrap; }
   .filter-group + .filter-group { border-left: none; padding-left: 0; margin-left: 0; }
   .filter-bar .btn { min-height: 36px; }
   .node-filter-wrap { width: 100%; }
@@ -2964,7 +2965,7 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
 .badge-success { background: var(--palette-green-700, #15803d); color: var(--palette-gray-50, #f9fafb); }
 .badge-danger { background: var(--palette-red-700, #b91c1c); color: var(--palette-gray-50, #f9fafb); }
 .badge-hash-3 { background: var(--palette-blue-700, #1d4ed8); color: var(--palette-gray-50, #f9fafb); }
-.timeline-legend { display: flex; gap: 16px; justify-content: center; margin-top: 8px; font-size: 12px; }
+.timeline-legend { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; margin-top: 8px; font-size: 12px; }
 .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .timeline-chart svg { display: block; }
 @media (max-width: 640px) {
@@ -3517,7 +3518,7 @@ tr[data-hops]:hover { background: rgba(59,130,246,0.1); }
 .analytics-chart-card canvas { max-width: 100%; height: auto; display: block; }
 .analytics-chart-card h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted); margin-bottom: 4px; }
 .analytics-chart-desc { font-size: 10px; color: var(--text-muted); margin-bottom: 8px; font-style: italic; }
-.analytics-heatmap { display: grid; grid-template-columns: 40px repeat(24, 1fr); gap: 2px; }
+.analytics-heatmap { display: grid; grid-template-columns: 40px repeat(24, 1fr); gap: 2px; overflow-x: auto; }
 .analytics-heatmap-cell { aspect-ratio: 1; border-radius: 2px; cursor: default; }
 .analytics-heatmap-label { font-size: 10px; color: var(--text-muted); display: flex; align-items: center; }
 .analytics-time-range { display: flex; gap: 8px; margin-bottom: 16px; }
