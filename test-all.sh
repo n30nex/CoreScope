@@ -46,6 +46,7 @@ node tests/unit/test-channels-merge-1498-unit.js
 node tests/unit/test-clear-filters.js
 node tests/unit/test-color-picker-ux.js
 node tests/unit/test-compare-flood-filter.js
+node tests/unit/test-compare-lifecycle.js
 node tests/unit/test-compare-overlap.js
 node tests/unit/test-confidence-indicator.js
 node tests/unit/test-coverage-gate.js

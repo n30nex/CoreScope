@@ -303,6 +303,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	// Packet endpoints
 	r.HandleFunc("/api/packets/observations", s.handleBatchObservations).Methods("POST")
 	r.HandleFunc("/api/packets/timestamps", s.handlePacketTimestamps).Methods("GET")
+	r.HandleFunc("/api/packets/summary", s.handlePacketSummary).Methods("GET")
 	r.HandleFunc("/api/packets/{id}", s.handlePacketDetail).Methods("GET")
 	r.HandleFunc("/api/packets", s.handlePackets).Methods("GET")
 
