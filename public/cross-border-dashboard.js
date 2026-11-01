@@ -2,7 +2,7 @@
 'use strict';
 (function () {
   var WIDTHS = [1, 2, 3], MAX_ROWS = 500, PAGE_SIZE = 25;
-  var TABS = [['overview', 'Overview'], ['hash-widths', 'Hash widths'], ['scopes-regions', 'Scopes & regions'], ['radio-load', 'Radio load'], ['repeaters', 'Repeaters']];
+  var TABS = [['overview', 'Crossings'], ['listeners', 'Listener activity'], ['hash-widths', 'Hash widths'], ['scopes-regions', 'Scopes & regions'], ['radio-load', 'Radio load'], ['repeaters', 'Repeaters']];
   function normalizeTab(value) { return TABS.some(function (tab) { return tab[0] === value; }) ? value : 'overview'; }
   function rows(value) { return Array.isArray(value) ? value : []; }
   function numeric(value) { return value != null && value !== '' && typeof value !== 'boolean' && Number.isFinite(Number(value)) ? Number(value) : null; }
@@ -115,13 +115,14 @@
       '<div id="cb-analytics-tabs" class="analytics-tabs cb-analytics-tabs" aria-label="Cross-border analytics">' + TABS.map(function (tab, i) {
         return '<button type="button" class="tab-btn' + (!i ? ' active' : '') + '" id="cb-tab-' + tab[0] + '" data-tab="' + tab[0] + '" aria-controls="cb-tab-panel">' + tab[1] + '</button>';
       }).join('') + '</div><div id="cb-tab-panel" role="tabpanel" tabindex="0" aria-labelledby="cb-tab-overview">' +
-      '<div class="cb-overview-metrics stats-grid"><div class="stat-card"><span class="stat-label">Saved records · Canadian listeners</span><strong id="cb-records-local" class="stat-value">—</strong>' + chart('cb-local-spark', 'Saved record history heard by Canadian listeners', 'cb-spark') + '<small><span id="cb-dash-local">—</span> distinct packet contents</small><small id="cb-dash-local-note"></small></div>' +
+      (window.CrossBorderFlow ? window.CrossBorderFlow.html() : '') +
+      '<div class="cb-overview-metrics stats-grid" data-cb-views="listeners"><div class="stat-card"><span class="stat-label">Saved records · Canadian listeners</span><strong id="cb-records-local" class="stat-value">—</strong>' + chart('cb-local-spark', 'Saved record history heard by Canadian listeners', 'cb-spark') + '<small><span id="cb-dash-local">—</span> distinct packet contents</small><small id="cb-dash-local-note"></small></div>' +
       '<div class="stat-card"><span id="cb-peer-kpi-label" class="stat-label">Saved records · peer listeners</span><strong id="cb-records-peer" class="stat-value">—</strong>' + chart('cb-peer-spark', 'Saved record history heard by peer listeners', 'cb-spark') + '<small><span id="cb-dash-peer">—</span> distinct packet contents</small><small id="cb-dash-peer-note"></small></div>' +
       '<div class="stat-card"><span class="stat-label">Heard in both feeds</span><strong id="cb-dash-shared" class="stat-value">—</strong><small>Shared packet contents with distinct observer identities</small></div>' +
       '<div class="stat-card"><span class="stat-label">Radios reporting airtime</span><strong id="cb-radio-reporters" class="stat-value">—</strong><small id="cb-radio-reporters-note"></small><small>Available reports, not all repeaters</small></div></div>' +
-      '<p id="cb-dashboard-coverage" class="cb-note"></p><p id="cb-chart-fallback" class="cb-warning" hidden>Charts could not load. All values remain available below each chart.</p>' +
-      '<section class="analytics-card cb-visual cb-dashboard-section" data-cb-views="overview" aria-labelledby="cb-activity-title"><h2 id="cb-activity-title">Saved path evidence over time</h2><p class="cb-section-intro">Compare reporting activity on one time scale. Gaps remain unknown.</p>' + chart('cb-activity-chart', 'Saved observer/path records over time by reporting feed', 'cb-chart-large') + '<p class="cb-note">These are first-stored observer/path records, not every radio reception. Listener coverage differs between feeds.</p></section>' +
-      '<section class="cb-dashboard-section" data-cb-views="overview" aria-labelledby="cb-own-adverts-title"><h2 id="cb-own-adverts-title">Own-advert width composition</h2><p class="cb-section-intro">Grouped by the listeners that heard each repeater; the same repeater may appear in both groups.</p><div class="analytics-grid cb-chart-pair">' +
+      '<p id="cb-dashboard-coverage" class="cb-note" data-cb-views="listeners"></p><p id="cb-chart-fallback" class="cb-warning" hidden>Charts could not load. All values remain available below each chart.</p>' +
+      '<section class="analytics-card cb-visual cb-dashboard-section" data-cb-views="listeners" aria-labelledby="cb-activity-title"><h2 id="cb-activity-title">Saved path evidence over time</h2><p class="cb-section-intro">Compare reporting activity on one time scale. Gaps remain unknown.</p>' + chart('cb-activity-chart', 'Saved observer/path records over time by reporting feed', 'cb-chart-large') + '<p class="cb-note">These are first-stored observer/path records, not every radio reception. Listener coverage differs between feeds.</p></section>' +
+      '<section class="cb-dashboard-section" data-cb-views="listeners" aria-labelledby="cb-own-adverts-title"><h2 id="cb-own-adverts-title">Own-advert width composition</h2><p class="cb-section-intro">Grouped by the listeners that heard each repeater; the same repeater may appear in both groups.</p><div class="analytics-grid cb-chart-pair">' +
       '<article class="analytics-card cb-visual"><h3 id="cb-local-donut-title">Heard by Canadian listeners</h3><div class="cb-donut-wrap">' + chart('cb-local-donut', 'Own-advert width composition heard by Canadian listeners', 'cb-chart-donut') + '<div class="cb-donut-center"><strong id="cb-local-donut-total">—</strong><span>known widths</span></div></div><div id="cb-local-donut-values" class="cb-chart-values"></div></article>' +
       '<article class="analytics-card cb-visual"><h3 id="cb-peer-donut-title">Heard by peer listeners</h3><div class="cb-donut-wrap">' + chart('cb-peer-donut', 'Own-advert width composition heard by peer listeners', 'cb-chart-donut') + '<div class="cb-donut-center"><strong id="cb-peer-donut-total">—</strong><span>known widths</span></div></div><div id="cb-peer-donut-values" class="cb-chart-values"></div></article></div></section>' +
       '<section class="cb-dashboard-section" data-cb-views="hash-widths" aria-labelledby="cb-adoption-title"><h2 id="cb-adoption-title">1-, 2- and 3-byte adoption</h2>' +
@@ -134,7 +135,7 @@
       '<article class="cb-visual analytics-card"><h3 id="cb-peer-trend-title">US / peer</h3>' + chart('cb-peer-trend', 'Peer observed path width shares over time') + '</article></div>' +
       '<p class="cb-note">Gaps mean incomplete history. These are saved packet records, not every radio reception.</p>' +
       '<details class="cb-chart-help"><summary>Time-series values and method</summary><p>Time buckets use first-stored observer/path records. Qualifying flood records are the denominator of each width share. Stored headers can be refreshed after the original timestamp, so these charts reconstruct retained evidence rather than an immutable over-air event history.</p><div class="cb-table-scroll"><table class="cb-trend-table"><caption>Observed path-width shares by time</caption><thead><tr><th>Feed</th><th>Time</th><th>Qualifying flood records</th><th>1-byte</th><th>2-byte</th><th>3-byte</th></tr></thead><tbody id="cb-trend-values"></tbody></table></div></details></section>' +
-      '<div class="cb-chart-pair analytics-grid" data-cb-views="overview scopes-regions"><section class="cb-visual analytics-card cb-dashboard-section"><h2>Flood scoping</h2>' + chart('cb-scope-chart', 'Scoped and unscoped flood evidence by feed') + '<div id="cb-scope-values" class="cb-chart-values"></div>' +
+      '<div class="cb-chart-pair analytics-grid" data-cb-views="scopes-regions"><section class="cb-visual analytics-card cb-dashboard-section"><h2>Flood scoping</h2>' + chart('cb-scope-chart', 'Scoped and unscoped flood evidence by feed') + '<div id="cb-scope-values" class="cb-chart-values"></div>' +
       '<p class="cb-note">Transport wildcard and ordinary unscoped flooding are shown separately.</p></section>' +
       '<section class="cb-visual analytics-card cb-dashboard-section"><h2>Shared content by region</h2><p class="cb-note">Select a cell to compare those two regions.</p><div id="cb-region-grid" class="cb-region-grid"></div><p id="cb-region-note" class="cb-note"></p></section></div>' +
       '<section class="cb-dashboard-section" data-cb-views="radio-load" aria-labelledby="cb-radio-title"><h2 id="cb-radio-title">Where are reporting radios busiest?</h2>' +
@@ -150,7 +151,11 @@
   };
 
   api.mount = function (root, callbacks) {
-    var charts = new Map(), current = {}, ui = {}, repeaterRows = [], page = 0, resizeFrame = null;
+    var charts = new Map(), current = {}, currentResponse = {}, ui = {}, repeaterRows = [], page = 0, resizeFrame = null;
+    var flowView = window.CrossBorderFlow ? window.CrossBorderFlow.mount(root, {
+      onView: view, onScope: callbacks.onScope,
+      onViewport: function (change) { ui=Object.assign({},ui,change);callbacks.onView(change,true); }
+    }) : null;
     function el(id) { return root.querySelector('#' + id); }
     function colors() {
       var css = getComputedStyle(root);
@@ -327,6 +332,7 @@
       root.querySelectorAll('#cb-analytics-tabs button').forEach(function (button) { var selected = button.dataset.tab === tab; button.classList.toggle('active', selected); button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1; });
       el('cb-tab-panel').setAttribute('aria-labelledby', 'cb-tab-' + tab);
       root.querySelectorAll('[data-cb-views]').forEach(function (section) { section.hidden = section.dataset.cbViews.split(' ').indexOf(tab) < 0; });
+      if (flowView) { flowView.setView(Object.assign({}, ui, { tab: tab })); flowView.resize(); }
       if (resizeFrame != null) cancelAnimationFrame(resizeFrame);
       resizeFrame = requestAnimationFrame(function () { resizeFrame = null; charts.forEach(function (chart) { if (chart.canvas.offsetParent) { chart.resize(); chart.update('none'); } }); });
     }
@@ -340,11 +346,12 @@
       if (button.id === 'cb-repeater-close') { var previous = ui.node; view({ node: '' }); var trigger = Array.from(el('cb-carry-rows').querySelectorAll('button')).find(function (b) { return b.dataset.repeater === previous; }); if (trigger) trigger.focus(); }
     }
     function search() { view({ repeater: el('cb-repeater-search').value.slice(0, 80), repeaterPage: '' }, true); }
-    function repaint() { if (current.local) update({ dashboard: current }, ui); }
+    function repaint() { if (current.local) update(currentResponse, ui); }
     function update(response, filters) {
-      ui = filters || ui; current = response.dashboard || {};
+      ui = filters || ui; currentResponse = response; current = response.dashboard || {};
       root.hidden = !current.local || !current.peer;
       if (root.hidden) return;
+      if (flowView) flowView.update(response, Object.assign({}, ui, { tab: normalizeTab(ui.tab || (ui.node ? 'repeaters' : 'overview')) }));
       applyTab();
       el('cb-repeater-search').value = ui.repeater || '';
       ['local', 'peer'].forEach(function (side) {
@@ -364,7 +371,7 @@
     }
     if (typeof initTabBar === 'function') initTabBar(el('cb-analytics-tabs'), function (button) { view({ tab: button.dataset.tab }); });
     root.addEventListener('click', click); el('cb-repeater-search').addEventListener('input', search); window.addEventListener('theme-changed', repaint);
-    return { update: update, setView: function (filters) { ui = filters; if (current.local) { el('cb-repeater-search').value = ui.repeater || ''; matrix(); applyTab(); } }, destroy: function () { if (resizeFrame != null) cancelAnimationFrame(resizeFrame); root.removeEventListener('click', click); el('cb-repeater-search').removeEventListener('input', search); window.removeEventListener('theme-changed', repaint); charts.forEach(function (c) { c.destroy(); }); charts.clear(); repeaterRows = []; current = {}; } };
+    return { update: update, setView: function (filters) { ui = filters; if (current.local) { el('cb-repeater-search').value = ui.repeater || ''; matrix(); applyTab(); } }, destroy: function () { if (flowView) flowView.destroy(); if (resizeFrame != null) cancelAnimationFrame(resizeFrame); root.removeEventListener('click', click); el('cb-repeater-search').removeEventListener('input', search); window.removeEventListener('theme-changed', repaint); charts.forEach(function (c) { c.destroy(); }); charts.clear(); repeaterRows = []; current = {}; } };
   };
   window.CrossBorderDashboard = api;
 })();

@@ -12,6 +12,7 @@ import (
 // Dashboard totals are independently sampled first-stored observer/path
 // evidence. They are not a raw packet-arrival counter or country of origin.
 type CrossBorderDashboard struct {
+	Flow                      *CrossBorderFlow           `json:"flow"`
 	BucketMinutes             int                        `json:"bucketMinutes"`
 	FromAt                    string                     `json:"fromAt"`
 	ToAt                      string                     `json:"toAt"`
@@ -206,7 +207,8 @@ func buildCrossBorderDashboard(ctx context.Context, cfg CrossBorderConfig, filte
 			}
 		}
 	}
-	return d, ctx.Err()
+	d.Flow, err = buildCrossBorderFlow(ctx, cfg, filters, local, peer, d, now)
+	return d, err
 }
 
 type crossBorderDashboardContent struct {

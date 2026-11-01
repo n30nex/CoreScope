@@ -53,8 +53,8 @@ type crossBorderWire struct {
 	scope                        CrossBorderScope
 }
 
-// Only a bounded raw prefix is fetched for header/path validation. It is never
-// serialized, payloads are never decoded, and decrypted JSON is never queried.
+// Only a firmware-bounded raw packet is fetched for route/scope validation. It
+// is never serialized, payloads are never decoded, and decrypted JSON is never queried.
 // A missing observation header is not replaced with a representative header.
 func crossBorderReadWire(row crossBorderObservationRow) (crossBorderWire, bool) {
 	b, err := hex.DecodeString(row.RawHex)
@@ -98,10 +98,16 @@ func crossBorderReadWire(row crossBorderObservationRow) (crossBorderWire, bool) 
 			}
 		}
 	}
+	if w.scope.Kind == "unknown" && row.ObservedScope != nil {
+		w.scope = *row.ObservedScope
+	}
 	return w, true
 }
 
 func crossBorderScopeMatches(scope CrossBorderScope, filter string) bool {
+	if strings.HasPrefix(filter, "named:") {
+		return scope.Kind == "named" && scope.Name != nil && *scope.Name == strings.TrimPrefix(filter, "named:")
+	}
 	if filter == "all" {
 		return true
 	}

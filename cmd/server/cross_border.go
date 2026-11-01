@@ -22,6 +22,7 @@ type CrossBorderConfig struct {
 	MaxConcurrentBuilds   int                          `json:"maxConcurrentBuilds"`
 	MaxSelectedIATA       int                          `json:"maxSelectedIata"`
 	StaleAfterSeconds     int                          `json:"staleAfterSeconds"`
+	MeshMapperRegions     []string                     `json:"meshMapperRegions,omitempty"`
 	PeerReferenceProfile  *CrossBorderReferenceProfile `json:"peerReferenceProfile,omitempty"`
 }
 
@@ -112,8 +113,9 @@ type CrossBorderSummary struct {
 }
 
 type CrossBorderScope struct {
-	Kind string  `json:"kind"`
-	Name *string `json:"name"`
+	Kind       string  `json:"kind"`
+	Name       *string `json:"name"`
+	Resolution string  `json:"resolution,omitempty"`
 }
 
 type CrossBorderLocation struct {
@@ -195,24 +197,29 @@ type CrossBorderFinding struct {
 }
 
 type CrossBorderResponse struct {
-	Dashboard     *CrossBorderDashboard   `json:"dashboard,omitempty"`
-	Enabled       bool                    `json:"enabled"`
-	Status        string                  `json:"status"`
-	GeneratedAt   string                  `json:"generatedAt"`
-	Filters       CrossBorderFilters      `json:"filters"`
-	Sources       CrossBorderSources      `json:"sources"`
-	Options       CrossBorderOptions      `json:"options"`
-	Limits        CrossBorderLimits       `json:"limits"`
-	Completeness  CrossBorderCompleteness `json:"completeness"`
-	Summary       CrossBorderSummary      `json:"summary"`
-	PeerObservers []CrossBorderObserver   `json:"peerObservers"`
-	PeerRepeaters []CrossBorderRepeater   `json:"peerRepeaters"`
-	Packets       []CrossBorderPacket     `json:"packets"`
-	Findings      []CrossBorderFinding    `json:"findings"`
+	MeshMapper            *CrossBorderMeshMapperSnapshot `json:"meshMapper,omitempty"`
+	ScopeCatalog          []CrossBorderScopeCatalogEntry `json:"scopeCatalog,omitempty"`
+	ScopeCatalogTruncated bool                           `json:"scopeCatalogTruncated,omitempty"`
+	Dashboard             *CrossBorderDashboard          `json:"dashboard,omitempty"`
+	ScopeResolution       *CrossBorderScopeResolution    `json:"scopeResolution,omitempty"`
+	Enabled               bool                           `json:"enabled"`
+	Status                string                         `json:"status"`
+	GeneratedAt           string                         `json:"generatedAt"`
+	Filters               CrossBorderFilters             `json:"filters"`
+	Sources               CrossBorderSources             `json:"sources"`
+	Options               CrossBorderOptions             `json:"options"`
+	Limits                CrossBorderLimits              `json:"limits"`
+	Completeness          CrossBorderCompleteness        `json:"completeness"`
+	Summary               CrossBorderSummary             `json:"summary"`
+	PeerObservers         []CrossBorderObserver          `json:"peerObservers"`
+	PeerRepeaters         []CrossBorderRepeater          `json:"peerRepeaters"`
+	Packets               []CrossBorderPacket            `json:"packets"`
+	Findings              []CrossBorderFinding           `json:"findings"`
 }
 
-// Internal snapshots contain only metadata used by the diagnostics. RawHex is
-// never serialized and only its packet header/path is inspected.
+// Internal snapshots contain only data used by the diagnostics. RawHex is
+// never serialized or decrypted; bounded payload bytes are used only to test
+// public scope-name HMAC candidates.
 type crossBorderObservationRow struct {
 	Hash, ObserverID, Direction, RawHex, FromPubkey string
 	ObserverIATA                                    string
@@ -220,6 +227,7 @@ type crossBorderObservationRow struct {
 	Timestamp                                       int64
 	PayloadType, RouteType                          int
 	ScopeName                                       *string
+	ObservedScope                                   *CrossBorderScope
 	SNR, RSSI                                       *float64
 	RawHexLength                                    int
 }
@@ -237,6 +245,7 @@ type crossBorderSnapshot struct {
 	ObserverSelectionComplete  bool
 	DashboardObserverSelection []crossBorderSelectedObserver
 	DashboardNodes             []crossBorderNodeIdentity
+	DashboardHiddenIDs         map[string]bool // bounded full hidden-name identities, including observer-only keys
 	DashboardNodeIndexComplete bool
 	DashboardMetrics           []crossBorderMetricRow
 	DashboardMetricsAvailable  bool

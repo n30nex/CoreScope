@@ -99,6 +99,39 @@ func TestRegionCodeIsCaseSensitive(t *testing.T) {
 	}
 }
 
+func TestRegionMACReusePreservesPayloadBoundariesAndReservedCodes(t *testing.T) {
+	mac := newRegionMAC("onny")
+	// Independent SHA256/HMAC vectors for key SHA256("#onny")[:16], with
+	// payload type5 prepended: the raw first two bytes are0000 andFFFF.
+	for _, test := range []struct {
+		payload, wire string
+		code          uint16
+	}{
+		{"eca40000", "0100", 1}, {"6ef10000", "FEFF", 0xfffe}, {"eca40000", "0100", 1},
+	} {
+		payload, err := hex.DecodeString(test.payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mac.Reset()
+		if got := regionCodeUsingMAC(mac, 5, payload); got != test.code {
+			t.Fatalf("reused MAC got%04X, want%04X", got, test.code)
+		}
+		if got := regionCode("onny", 5, payload); got != test.wire {
+			t.Fatalf("wire code got%q, want%q", got, test.wire)
+		}
+	}
+	for _, payloadType := range []byte{5, 6, 5} {
+		payload := []byte("payload-type boundary")
+		mac.Reset()
+		code := regionCodeUsingMAC(mac, payloadType, payload)
+		wire := fmt.Sprintf("%02X%02X", byte(code), byte(code>>8))
+		if want := regionCode("onny", payloadType, payload); wire != want {
+			t.Fatal("reused MAC retained bytes from another payload/type")
+		}
+	}
+}
+
 func TestUnmatchedTransmissionsInWindow(t *testing.T) {
 	s := newScopeTestStore(t)
 	recent := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
